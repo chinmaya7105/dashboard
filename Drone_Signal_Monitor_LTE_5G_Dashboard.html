@@ -1,0 +1,2527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Drone RF Monitor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+:root{
+  --bg:#0A0F1A;
+  --panel:#101827;
+  --panel2:#0D1420;
+  --border:#1E293B;
+  --border-soft:#182233;
+  --text:#E7ECF3;
+  --text-dim:#8B98AC;
+  --text-faint:#546077;
+  --green:#22C55E;
+  --lime:#A3E635;
+  --yellow:#EAB308;
+  --orange:#FB923C;
+  --red:#EF4444;
+  --blue:#3B82F6;
+  --cyan:#22D3EE;
+  --purple:#A78BFA;
+  --sidebar-w:208px;
+  --font:'Inter',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%; background:var(--bg);}
+body{font-family:var(--font); color:var(--text); font-size:13px; overflow:hidden;}
+::-webkit-scrollbar{width:7px; height:7px;}
+::-webkit-scrollbar-thumb{background:var(--border); border-radius:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+a,button{font-family:inherit;}
+@media (prefers-reduced-motion: reduce){ *{animation-duration:.001s !important; transition-duration:.001s !important;} }
+
+.app{ display:grid; grid-template-columns:var(--sidebar-w) 1fr; height:100vh; }
+
+/* ================= SIDEBAR ================= */
+.sidebar{ background:var(--panel2); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+.sidebar-toggle{position:absolute;left:calc(var(--sidebar-w) - 14px);top:18px;z-index:1000;width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--panel2);color:var(--text-dim);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;}
+.sidebar-toggle:hover{color:var(--text);border-color:var(--blue);}
+.app.sidebar-hidden{grid-template-columns:0 1fr;}
+.app.sidebar-hidden .sidebar{width:0;overflow:hidden;border-right:0;}
+.app.sidebar-hidden .sidebar-toggle{left:10px;}
+
+.brand{ display:flex; align-items:center; gap:10px; padding:18px 16px; border-bottom:1px solid var(--border);}
+.brand-icon{ width:32px; height:32px; border-radius:8px; background:linear-gradient(135deg,#3B82F6,#22D3EE); display:flex; align-items:center; justify-content:center; flex:none;}
+.brand h1{ font-size:13.5px; font-weight:800; letter-spacing:.02em; line-height:1.15;}
+.brand span{ display:block; font-size:9px; color:var(--text-faint); font-weight:600; letter-spacing:.12em;}
+
+.nav{ flex:1; padding:12px 10px; display:flex; flex-direction:column; gap:2px; overflow-y:auto;}
+.nav-item{
+  display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:7px; cursor:pointer;
+  color:var(--text-dim); font-size:12.5px; font-weight:500; transition:background .15s, color .15s;
+}
+.nav-item svg{ flex:none; opacity:.85;}
+.nav-item:hover{ background:var(--border-soft); color:var(--text);}
+.nav-item.active{ background:linear-gradient(90deg,#1E3A5F33,transparent); color:#fff; font-weight:600; box-shadow:inset 2px 0 0 var(--blue);}
+
+.sidebar-footer{ border-top:1px solid var(--border); padding:14px 16px 12px;}
+.sf-label{ font-size:9px; font-weight:700; letter-spacing:.1em; color:var(--text-faint); margin-bottom:10px;}
+.conn-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:9px;}
+.conn-row .left{ display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--text-dim);}
+.conn-dot{ width:6px; height:6px; border-radius:50%; background:var(--green); box-shadow:0 0 5px var(--green); flex:none;}
+.conn-dot.off{ background:var(--red); box-shadow:0 0 5px var(--red);}
+.conn-status{ font-size:10px; color:var(--green); font-weight:600;}
+.version{ font-size:9.5px; color:var(--text-faint); margin-top:6px;}
+
+/* ================= MAIN ================= */
+.main{ display:flex; flex-direction:column; height:100vh; overflow:hidden;}
+
+.topbar{ display:flex; align-items:center; gap:16px; padding:0 22px; height:56px; border-bottom:1px solid var(--border); background:var(--panel2); flex:none;}
+.live-badge{ display:flex; align-items:center; gap:6px; background:#0F3324; border:1px solid #1B5E3E; color:var(--green); font-size:11px; font-weight:700; padding:4px 10px; border-radius:20px;}
+.live-dot{ width:6px; height:6px; border-radius:50%; background:var(--green); animation:blink 1.4s infinite;}
+@keyframes blink{ 0%,100%{opacity:1;} 50%{opacity:.3;} }
+.topbar .timer{ font-family:var(--mono); font-size:13px; font-weight:600; color:var(--text);}
+.topbar .session{ font-size:12px; color:var(--text-dim);}
+.topbar .session b{ color:var(--text); font-weight:600;}
+.topbar-spacer{ flex:1;}
+.icon-btn{ width:32px; height:32px; border-radius:7px; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer; position:relative; background:transparent; border:none;}
+.icon-btn:hover{ background:var(--border-soft); color:var(--text);}
+.icon-btn .badge{ position:absolute; top:2px; right:2px; background:var(--red); color:#fff; font-size:8.5px; font-weight:700; border-radius:8px; padding:1px 4px; line-height:1.2;}
+.topbar .clockblock{ text-align:right;}
+.topbar .clockblock .ct{ font-family:var(--mono); font-size:12.5px; font-weight:600;}
+.topbar .clockblock .cd{ font-size:10px; color:var(--text-faint);}
+
+.content{ flex:1; overflow-y:auto; padding:16px 20px 24px; display:flex; flex-direction:column; gap:14px;}
+
+/* ---- KPI STRIP ---- */
+.kpi-strip{ display:grid; grid-template-columns:repeat(8,1fr); gap:12px;}
+.kpi-card{ background:var(--panel); border:1px solid var(--border); border-radius:9px; padding:12px 14px;}
+.kpi-card label{ display:block; font-size:9.5px; font-weight:700; letter-spacing:.08em; color:var(--text-faint); margin-bottom:6px;}
+.kpi-card .kv{ font-size:20px; font-weight:700; font-family:var(--mono);}
+.kpi-card .kv span{ font-size:10.5px; color:var(--text-dim); font-weight:500; margin-left:2px;}
+.kpi-card .ksub{ font-size:9.5px; color:var(--text-faint); margin-top:4px; display:flex; align-items:center; gap:5px;}
+.kpi-card svg.spark{ display:block; margin-top:2px;}
+
+/* ---- GRID ROWS ---- */
+.row{ display:grid; gap:14px; }
+.row.r2{ grid-template-columns: 1.5fr 1.5fr .75fr; }
+.row.r3{ grid-template-columns: 2.3fr 1.5fr .95fr; }
+/* Reduce FLIGHT TELEMETRY from left side only */
+.row.r3 > .card:last-child { width: 100%; height: 115%; justify-self: end;}
+.row.r4{ grid-template-columns: .95fr 1fr 1fr .75fr; align-items:stretch; }
+/* Keep Signal Quality over Altitude wider and place Cell Handover History directly below it. */
+.row.r4 > .card:nth-child(1){ grid-column:1; grid-row:1 / span 2; min-height:0; height:100%; overflow:hidden; }
+.row.r4 > .card:nth-child(2){ grid-column:2 / span 2; grid-row:1; min-width:0; }
+.row.r4 > .card:nth-child(2) .card-body{ min-height:240px; }
+.row.r4 > .card:nth-child(3){ grid-column:2 / span 2; grid-row:2; min-width:0; position: relative; top: -80px; height: calc(100% + 80px);}
+.row.r4 > .card:nth-child(4){ grid-column:4; grid-row:1 / span 2; position: relative; top: 80px; height: calc(100% - 80px);}
+
+
+.card{ background:var(--panel); border:1px solid var(--border); border-radius:10px; display:flex; flex-direction:column; overflow:hidden;}
+.card-head{ display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border-soft); flex:none;}
+.card-head h3{ font-size:11.5px; font-weight:700; letter-spacing:.04em; color:var(--text);}
+.card-head .sub{ font-size:10px; color:var(--text-faint); font-weight:500;}
+.card-head-spacer{ flex:1;}
+.chip{ font-size:10px; font-weight:700; padding:3px 9px; border-radius:5px; background:#12335F; color:#5B9CFF; border:1px solid #1D4A85;}
+.card-head select, .head-btn{
+  background:var(--border-soft); border:1px solid var(--border); color:var(--text-dim); font-size:10.5px;
+  padding:4px 9px; border-radius:6px; cursor:pointer; font-family:inherit;
+}
+.link{ font-size:10.5px; color:#5B9CFF; cursor:pointer; font-weight:600;}
+
+/* ---- MAP CARD ---- */
+.map-card{ min-height:360px; position:relative;}
+.map-card .card-body{ flex:1; position:relative;}
+#map2d{ position:absolute; inset:0;}
+.map-controls{ position:absolute; top:10px; right:10px; z-index:500; display:flex; flex-direction:column; gap:6px;}
+.map-controls button{
+  width:28px; height:28px; border-radius:6px; background:rgba(16,24,39,.9); border:1px solid var(--border);
+  color:var(--text-dim); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px;
+}
+.map-controls button:hover{ color:var(--text); border-color:var(--blue);}
+.legend-box{
+  position:absolute; left:10px; bottom:34px; z-index:500; background:rgba(13,20,32,.92); border:1px solid var(--border);
+  border-radius:7px; padding:8px 10px; font-size:10px; color:var(--text-dim);
+}
+.legend-box .lt{ font-weight:700; color:var(--text); margin-bottom:5px; font-size:9.5px;}
+.legend-row{ display:flex; align-items:center; gap:6px; margin-bottom:3px;}
+.legend-dot{ width:7px; height:7px; border-radius:50%; flex:none;}
+.map-footer{ display:flex; justify-content:space-between; padding:7px 12px; border-top:1px solid var(--border-soft); font-family:var(--mono); font-size:10px; color:var(--text-dim); flex:none;}
+
+/* ---- 3D VIEW ---- */
+.view3d-card .card-body{ flex:1; position:relative;}
+#canvas3d{ width:100%; height:100%; display:block; background:#08121d;}
+.view3d-body{ min-height:360px; overflow:hidden; background:radial-gradient(circle at 52% 38%,rgba(52,78,92,.40),transparent 36%),linear-gradient(160deg,#07111b 0%,#102330 45%,#0b1820 100%);}
+.view3d-body:after{ content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at center,transparent 35%,rgba(0,0,0,.28) 100%);}
+.view3d-overlay-top{ position:absolute; left:10px; right:10px; top:10px; z-index:5; display:flex; align-items:center; justify-content:space-between; pointer-events:none;}
+.view3d-select,.view3d-tools button{ pointer-events:auto; background:rgba(9,16,27,.92); color:#E7ECF3; border:1px solid #334155; border-radius:5px; height:30px; box-shadow:0 4px 12px rgba(0,0,0,.3);}
+.view3d-select{ padding:0 10px; font-size:12px; font-family:var(--mono);}
+.view3d-tools{ display:flex; gap:6px;}
+.view3d-tools button{ width:34px; font-size:16px; cursor:pointer;}
+.view3d-tools button:hover{ border-color:#60A5FA; background:#142235;}
+.axis-label{ position:absolute; left:10px; top:54px; z-index:4; font-size:9.5px; color:#D5DDE8; font-family:var(--mono); text-shadow:0 1px 3px #000;}
+.legend-vert{
+  position:absolute; right:10px; top:54px; z-index:4; background:rgba(8,15,25,.90); border:1px solid #475569; border-radius:7px;
+  padding:8px 8px; display:flex; flex-direction:column; align-items:center; gap:2px; box-shadow:0 5px 18px rgba(0,0,0,.35);
+}
+.legend-vert .lt{ font-size:9px; color:#E7ECF3; margin-bottom:5px; font-weight:700;}
+.legend-grad{ width:12px; height:112px; border-radius:3px; background:linear-gradient(180deg,#0EA5E9 0%,#22C55E 25%,#A3E635 42%,#EAB308 60%,#F97316 78%,#EF4444 100%);}
+.legend-vert .lscale{ display:flex; flex-direction:column; justify-content:space-between; height:112px; font-size:8px; color:#CBD5E1; margin-left:5px;}
+.view3d-hud{ position:absolute; left:50%; bottom:10px; transform:translateX(-50%); z-index:5; display:flex; gap:22px; padding:8px 14px; border-radius:5px; background:rgba(4,9,15,.88); color:#CBD5E1; font-family:var(--mono); font-size:10px; white-space:nowrap; box-shadow:0 4px 14px rgba(0,0,0,.4);}
+.view3d-hud b{ color:#fff; font-weight:700;}
+.view3d-footer{ display:flex; justify-content:space-around; padding:7px 12px; border-top:1px solid var(--border-soft); font-family:var(--mono); font-size:10px; color:var(--text-dim); flex:none;}
+.view3d-footer span b{ color:var(--text); font-weight:600;}
+
+/* ---- INFO PANELS (serving cell / telemetry / status) ---- */
+.info-grid{ display:grid; grid-template-columns:1fr 1fr; gap:7px 10px; padding:10px;}
+.info-item .il{ font-size:8.5px; color:var(--text-faint); font-weight:600; letter-spacing:.03em; margin-bottom:2px;}
+.info-item .iv{ font-family:var(--mono); font-size:11.5px; font-weight:700;}
+.list-rows{ padding:4px 10px 8px;}
+.lrow{ display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border-soft);}
+.lrow:last-child{ border-bottom:none;}
+.lrow .ll{ display:flex; align-items:center; gap:9px; font-size:11.5px; color:var(--text-dim);}
+.lrow .ll svg{ opacity:.7; flex:none;}
+.lrow .lv{ font-family:var(--mono); font-size:12px; font-weight:700; color:var(--text);}
+
+/* ---- TABLE ---- */
+table.data-table{ width:100%; border-collapse:collapse; font-size:11px;}
+.data-table thead th{
+  text-align:left; font-size:9.5px; color:var(--text-faint); font-weight:700; letter-spacing:.04em;
+  padding:8px 14px; border-bottom:1px solid var(--border-soft);
+}
+.data-table tbody td{ padding:8px 14px; font-family:var(--mono); color:var(--text-dim); border-bottom:1px solid var(--border-soft);}
+.data-table tbody tr:last-child td{ border-bottom:none;}
+
+/* ---- CHART CARD ---- */
+.chart-card .card-body{ padding:10px 14px 14px; flex:1;}
+.chart-legend{ display:flex; gap:14px; margin-left:auto;}
+.chip-leg{ display:flex; align-items:center; gap:5px; font-size:10px; color:var(--text-dim); font-weight:600; cursor:pointer; user-select:none; transition:opacity .15s;}
+.chip-leg i{ width:9px; height:2.5px; border-radius:2px; display:inline-block;}
+.chip-leg.off{ opacity:.3;}
+.chip-leg:hover{ opacity:.75;}
+
+.range-toggle{ display:flex; gap:2px; margin-right:12px;}
+.range-btn{ background:var(--border-soft); border:1px solid var(--border); color:var(--text-dim); font-size:10px; font-weight:600; padding:4px 9px; border-radius:5px; cursor:pointer; font-family:inherit;}
+.range-btn:hover{ color:var(--text);}
+.range-btn.active{ background:#12335F; color:#5B9CFF; border-color:#1D4A85;}
+
+.table-search{ background:var(--border-soft); border:1px solid var(--border); color:var(--text); font-size:10.5px; padding:5px 9px; border-radius:6px; width:130px; font-family:inherit;}
+.table-search::placeholder{ color:var(--text-faint);}
+.data-table thead th{ cursor:pointer; user-select:none; white-space:nowrap;}
+.data-table thead th:hover{ color:var(--text);}
+.data-table tbody tr{ transition:background .12s;}
+.data-table tbody tr:hover{ background:var(--border-soft); cursor:pointer;}
+
+#canvas3d{ cursor:grab;}
+#canvas3d:active{ cursor:grabbing;}
+
+.leaflet-popup-content-wrapper{ background:#101827; color:#E7ECF3; border:1px solid #1E293B; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.5);}
+.leaflet-popup-tip{ background:#101827; border:1px solid #1E293B;}
+.leaflet-popup-content{ margin:10px 12px;}
+.leaflet-container a.leaflet-popup-close-button{ color:#8B98AC;}
+.leaflet-container a.leaflet-popup-close-button:hover{ color:#E7ECF3;}
+
+/* ---- EVENTS ---- */
+.events-list{ padding:4px 0; overflow-y:auto; flex:1 1 auto; min-height:0; height:0;}
+.event-row{ display:flex; gap:10px; padding:9px 14px; border-left:3px solid transparent;}
+.event-row.ok{ border-color:var(--green);}
+.event-row.warn{ border-color:var(--orange);}
+.event-row.info{ border-color:var(--blue);}
+.event-row.err{ border-color:var(--red);}
+.event-icon{ flex:none; margin-top:1px;}
+.event-body .et{ font-size:11.5px; font-weight:600; color:var(--text);}
+.event-body .ed{ font-size:10.5px; color:var(--text-faint); margin-top:1px;}
+.event-body .etime{ font-family:var(--mono); font-size:9.5px; color:var(--text-faint); margin-bottom:2px;}
+
+/* ---- HANDOVER TIMELINE ---- */
+.timeline{ padding:12px 16px; overflow-y:auto; flex:1;}
+.tl-item{ display:flex; gap:12px; position:relative; padding-bottom:16px;}
+.tl-item:last-child{ padding-bottom:0;}
+.tl-item::before{ content:''; position:absolute; left:4px; top:14px; bottom:-2px; width:1px; background:var(--border);}
+.tl-item:last-child::before{ display:none;}
+.tl-dot{ width:9px; height:9px; border-radius:50%; flex:none; margin-top:3px; z-index:1; border:2px solid var(--bg);}
+.tl-time{ font-family:var(--mono); font-size:10px; color:var(--text-faint);}
+.tl-main{ font-size:11px; color:var(--text-dim); margin-top:2px;}
+.tl-main b{ color:var(--text); font-weight:600;}
+
+.card-scroll{ flex:1; overflow-y:auto;}
+
+<style>
+/* MQTT live connection panel */
+.mqtt-modal{position:fixed;inset:0;background:rgba(0,0,0,.68);display:none;align-items:flex-start;justify-content:center;z-index:5000;backdrop-filter:blur(4px);padding:20px;box-sizing:border-box;overflow-y:auto}
+.mqtt-modal.show{display:flex}.mqtt-box{width:min(560px,92vw);max-height:calc(100vh - 40px);overflow-y:auto;box-sizing:border-box;margin:auto 0;background:#101827;border:1px solid #26344a;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.55);padding:20px}.mqtt-box h2{font-size:16px;margin-bottom:6px}.mqtt-box p{color:#8B98AC;font-size:11px;line-height:1.5;margin-bottom:14px}.mqtt-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.mqtt-field{display:flex;flex-direction:column;gap:5px}.mqtt-field.full{grid-column:1/-1}.mqtt-field label{font-size:10px;color:#8B98AC;font-weight:700;text-transform:uppercase}.mqtt-field input{background:#0D1420;border:1px solid #26344a;color:#E7ECF3;border-radius:7px;padding:9px 10px;font-family:var(--mono);font-size:11px;outline:none}.mqtt-field input:focus{border-color:#3B82F6}.mqtt-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}.mqtt-actions button{border:1px solid #26344a;background:#182233;color:#E7ECF3;border-radius:7px;padding:8px 13px;cursor:pointer}.mqtt-actions .primary{background:#1d4ed8;border-color:#2563eb}.mqtt-status{margin-top:10px;font-family:var(--mono);font-size:10px;color:#8B98AC;min-height:15px}.live-off .live-dot{background:#EF4444!important;box-shadow:0 0 0 0 transparent!important}.live-off .live-badge{color:#FB923C}.head-btn.live-connect{border-color:#1d4ed8;color:#93c5fd}.
+
+/* ===== 3D MAP FLEX VISUAL LAYOUT — isolated override ===== */
+.view3d-card { overflow: hidden; }
+.view3d-body {
+  position: relative;
+  min-height: 320px;
+  overflow: hidden;
+}
+.view3d-body #canvas3d {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0;
+}
+.view3d-body .view3d-select {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  z-index: 10;
+}
+.view3d-body .view3d-tools {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  z-index: 10;
+}
+.view3d-footer {
+  position: relative;
+  z-index: 20;
+  display: flex !important;
+  align-items: center;
+  justify-content: space-around;
+  gap: 18px;
+  min-height: 54px;
+  padding: 12px 18px;
+  box-sizing: border-box;
+}
+
+/* ===== 3D VIEW — compass / legend / telemetry-chip overlay (RSRP-dashboard style) ===== */
+.v3-compass{
+  position:absolute; top:14px; left:50%; transform:translateX(-50%);
+  width:46px; height:46px; border-radius:50%;
+  background:rgba(6,12,20,.85); backdrop-filter:blur(6px);
+  border:1px solid #334155; display:flex; align-items:center; justify-content:center;
+  z-index:6; pointer-events:none;
+}
+.v3-compass-n{ position:absolute; top:2px; left:50%; transform:translateX(-50%); font-family:var(--mono); font-size:7px; color:#8B98AC; font-weight:700; }
+.v3-compass-needle{ width:2px; height:16px; background:linear-gradient(180deg,#EF4444,transparent); position:absolute; top:6px; left:50%; transform-origin:bottom center; margin-left:-1px; transition:transform .15s linear; }
+
+.v3-legend{
+  position:absolute; top:150px; right:2px; z-index:6; width:95px;
+  background:rgba(6,12,20,.85); backdrop-filter:blur(6px);
+  border:1px solid #334155; border-radius:8px; padding:10px 10px; pointer-events:none;
+}
+.v3-legend-title{ font-family:var(--mono); font-size:9px; color:#CBD5E1; letter-spacing:.05em; text-transform:uppercase; margin-bottom:8px; text-align:center; }
+.v3-legend-wrap{ display:flex; justify-content:center; position:relative; }
+.v3-legend-gradient{ width:13px; height:120px; margin:0 auto; border-radius:3px; background:linear-gradient(180deg,#22C55E 0%,#A3E635 25%,#EAB308 50%,#FB923C 75%,#EF4444 100%); position:relative; }
+.v3-legend-scale{ display:flex; flex-direction:column; justify-content:space-between; height:120px; position:absolute; top:0; right:13px; font-family:var(--mono); font-size:8.5px; color:#CBD5E1; }
+
+.v3-tel-overlay{ position:absolute; bottom:14px; left:14px; right:14px; z-index:6; display:flex; gap:8px; flex-wrap:wrap; pointer-events:none; }
+.v3-tel-chip{ background:rgba(6,12,20,.85); backdrop-filter:blur(6px); border:1px solid #334155; border-radius:6px; padding:6px 10px; font-family:var(--mono); }
+.v3-tel-chip .v3-tc-label{ font-size:8.5px; color:#8B98AC; letter-spacing:.05em; text-transform:uppercase; }
+.v3-tel-chip .v3-tc-value{ font-size:13px; color:#E7ECF3; font-weight:600; margin-top:1px; }
+.v3-tel-chip .v3-tc-value .unit{ font-size:10px; color:#8B98AC; font-weight:400; margin-left:2px; }
+
+/* old bottom horizontal legend + floating axis label are superseded by the overlay above */
+#legend3dBottom, .view3d-body .axis-label{ display:none !important; }
+
+.legend3d-bottom {
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  bottom: 62px;
+  z-index: 6;
+  padding: 7px 12px 6px;
+  border: 1px solid rgba(120,150,175,.22);
+  border-radius: 12px;
+  background: rgba(5,12,19,.78);
+  backdrop-filter: blur(5px);
+  pointer-events: none;
+}
+.legend3d-bottom-title {
+  text-align: center;
+  font: 600 12px var(--mono, monospace);
+  color: #d9e3ec;
+  margin-bottom: 4px;
+}
+.legend3d-gradient {
+  height: 8px;
+  border-radius: 5px;
+  background: linear-gradient(90deg,#06a9e8 0%,#20c7aa 20%,#83d11a 38%,#f5dc18 55%,#ff9d17 72%,#f04444 100%);
+}
+.legend3d-labels {
+  display:flex;
+  justify-content:space-between;
+  margin-top:3px;
+  color:#b8c5d0;
+  font: 10px var(--mono, monospace);
+}
+
+
+/* MQTT modal: keep the complete dialog above the viewport/taskbar */
+.mqtt-modal{
+  align-items:flex-start !important;
+  justify-content:center !important;
+  padding:28px 16px 56px !important;
+  box-sizing:border-box !important;
+  overflow-y:auto !important;
+}
+.mqtt-box{
+  max-height:calc(100vh - 84px) !important;
+  overflow-y:auto !important;
+  margin-top:0 !important;
+}
+
+
+/* Final MQTT modal viewport fix */
+.mqtt-modal{
+  align-items:flex-start !important;
+  padding:16px 16px 60px !important;
+  overflow-y:auto !important;
+}
+.mqtt-box{
+  margin:0 auto !important;
+  max-height:calc(100vh - 76px) !important;
+  overflow-y:auto !important;
+}
+
+
+/* === FINAL: MQTT LIVE CONNECTION positioning === */
+.mqtt-modal{
+  align-items:flex-start !important;
+  justify-content:center !important;
+  padding:24px 16px 80px !important;
+  box-sizing:border-box !important;
+  overflow-y:auto !important;
+}
+.mqtt-box{
+  margin:0 auto !important;
+  transform:translateY(-18px) !important;
+  max-height:calc(100vh - 110px) !important;
+  overflow-y:auto !important;
+}
+
+
+/* MQTT DETAILS / SETTINGS — presentation only */
+.mqtt-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.mqtt-panel-head h2{margin:0 0 6px}
+.mqtt-panel-head p{margin:0;color:#8ea4bb;line-height:1.45}
+.mqtt-panel-tabs{display:flex;gap:6px;flex-shrink:0}
+.mqtt-panel-tab{border:1px solid #2a3b50;background:#0b1421;color:#9fb0c3;border-radius:7px;padding:8px 13px;cursor:pointer}
+.mqtt-panel-tab.active{background:#183a63;color:#fff;border-color:#2f78bd}
+.mqtt-detail-grid,.mqtt-settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mqtt-detail-card{background:#0b1421;border:1px solid rgba(130,155,180,.2);border-radius:8px;padding:12px}
+.mqtt-detail-card.full,.mqtt-field.full{grid-column:1/-1}
+.mqtt-detail-card label{display:block;color:#8195aa;font-size:11px;text-transform:uppercase;margin-bottom:7px}
+.mqtt-detail-card strong{display:block;color:#e7eef7;font-family:var(--mono,monospace);font-size:13px;word-break:break-all}
+.mqtt-settings-grid .mqtt-field{background:#0b1421;border:1px solid rgba(130,155,180,.2);border-radius:8px;padding:10px}
+.mqtt-settings-grid .mqtt-field label{display:block;color:#8195aa;font-size:11px;text-transform:uppercase;margin-bottom:6px}
+.mqtt-settings-grid .mqtt-field input{width:100%;box-sizing:border-box;background:#0a1320;color:#eef5fb;border:1px solid #2a3b50;border-radius:6px;padding:9px;font-family:var(--mono,monospace)}
+@media(max-width:700px){.mqtt-panel-head{display:block}.mqtt-panel-tabs{margin-top:12px}.mqtt-detail-grid,.mqtt-settings-grid{grid-template-columns:1fr}.mqtt-detail-card.full,.mqtt-field.full{grid-column:auto}}
+
+
+/* MQTT Details: server and port */
+.mqtt-details-server-port{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+  margin-bottom:12px;
+}
+@media(max-width:700px){
+  .mqtt-details-server-port{grid-template-columns:1fr}
+}
+
+</style>
+</style>
+
+
+
+<style>
+#mqttModal.show{display:flex !important;visibility:visible !important;opacity:1 !important;}
+</style>
+
+
+
+<style>
+/* MQTT popup: fixed viewport + internal scrolling */
+#mqttModal{
+  position:fixed !important;
+  inset:0 !important;
+  width:100vw !important;
+  height:100vh !important;
+  box-sizing:border-box !important;
+  align-items:center !important;
+  justify-content:center !important;
+  padding:16px !important;
+  overflow:hidden !important;
+  z-index:99999 !important;
+}
+#mqttModal.show{
+  display:flex !important;
+  visibility:visible !important;
+  opacity:1 !important;
+}
+#mqttModal .mqtt-box{
+  width:min(560px,92vw) !important;
+  max-width:560px !important;
+  max-height:calc(100vh - 32px) !important;
+  margin:0 !important;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  box-sizing:border-box !important;
+  transform:none !important;
+}
+
+
+
+
+
+<style>
+/* Signal Quality over Altitude metric buttons — isolated to this chart */
+.scatter-head{justify-content:flex-start;}
+.scatter-head .scatter-metric-buttons{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap;}
+.scatter-metric-btn{border:1px solid var(--border);background:#101a2a;color:var(--text-dim);border-radius:5px;padding:4px 8px;font-family:var(--mono);font-size:9px;font-weight:700;cursor:pointer;}
+.scatter-metric-btn:hover{color:var(--text);border-color:#3B82F6;}
+.scatter-metric-btn.active{background:#183a63;color:#fff;border-color:#2f78bd;}
+@media(max-width:700px){.scatter-head{align-items:flex-start;flex-wrap:wrap}.scatter-head .scatter-metric-buttons{width:100%;margin-left:0;}}
+</style>
+
+<style>
+/* SIGNAL QUALITY OVER ALTITUDE:
+   Fill the existing window with the grid without increasing the window/card size. */
+.row.r4 > .card:nth-child(2) .card-body{
+  overflow:hidden;
+  display:flex;
+  min-height:0;
+}
+#scatterChart{
+  width:100% !important;
+  height:100% !important;
+  min-height:0 !important;
+  display:block;
+  flex:1 1 auto;
+}
+</style>
+
+<style>
+.rf-history-body{display:flex;flex-direction:column;min-height:0;}
+.rf-history-body > svg{flex:1 1 auto;min-height:0;}
+.rf-history-body .range-toggle{flex:0 0 auto;display:flex;justify-content:center;align-items:center;gap:6px;padding:7px 0 2px;}
+</style>
+<style>
+/* SIGNAL QUALITY OVER ALTITUDE: reduce height by 20% only; preserve full width. */
+.row.r4 > .card:nth-child(2){
+  height:80% !important;
+  min-height:0 !important;
+}
+</style>
+<style>
+/* Flight Telemetry: reduce width from the LEFT only; keep vertical size unchanged. */
+#side .stat-block:nth-of-type(2){
+  width:80%;
+  margin-left:0;
+  margin-right:auto;
+}
+</style>
+</style>
+<!-- Metric-specific threshold legends synchronized for 2D + 3D -->
+</head>
+<body>
+<div class="app">
+  <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Hide sidebar" title="Hide sidebar">◀</button>
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="4"/></svg>
+      </div>
+      <div><h1>DRONE RF</h1><span>MONITOR</span></div>
+    </div>
+    <nav class="nav" id="navList">
+      <div class="nav-item active" data-n="Overview"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Overview</div>
+      <div class="nav-item" data-n="RF Map (2D)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 20l-6-3V4l6 3 6-3 6 3v13l-6-3-6 3z"/></svg>RF Map (2D)</div>
+      <div class="nav-item" data-n="RF Map (3D)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5z"/><path d="M3 7l9 5 9-5M12 12v9"/></svg>RF Map (3D)</div>
+      <div class="nav-item" data-n="Cellular"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20v-4M9 20v-8M14 20V8M19 20V4"/></svg>Cellular</div>
+      <div class="nav-item" data-n="RF Analytics"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-8"/></svg>RF Analytics</div>
+      <div class="nav-item" data-n="Flight Telemetry"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12l9-2 3-8 2 8 8 2-8 2-2 8-3-8-9-2z"/></svg>Flight Telemetry</div>
+      <div class="nav-item" data-n="Network"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8.5a15 15 0 0120 0M5 12a10 10 0 0114 0M8.5 15.5a5 5 0 017 0"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/></svg>Network</div>
+      <div class="nav-item" data-n="Events &amp; Alerts"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>Events & Alerts</div>
+      <div class="nav-item" data-n="Replay"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>Replay</div>
+      <div class="nav-item" data-n="Settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9c.36.24.6.6.7 1H21a2 2 0 010 4h-.09c-.14.4-.34.76-.51 1z"/></svg>Settings</div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sf-label">CONNECTIONS</div>
+      <div class="conn-row" title="Jetson Agent is separate from the direct MQTT browser connection"><div class="left"><span class="conn-dot" id="dotJetson"></span>Jetson (Agent)</div><span class="conn-status" id="stJetson">Not connected</span></div>
+      <div class="conn-row"><div class="left"><span class="conn-dot" id="dotMqtt"></span>MQTT Broker</div><span class="conn-status" id="stMqtt">Disconnected</span></div>
+      <div class="conn-row"><div class="left"><span class="conn-dot" id="dotDb"></span>Database</div><span class="conn-status" id="stDb">N/A</span></div>
+      <div class="version">v1.0.0</div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="live-badge"><span class="live-dot" id="liveDot"></span><span id="liveText">LIVE</span></div>
+      <div class="timer" id="missionTimer">00:24:15</div>
+      <div class="session">Session: <b>Flight_Test_012</b></div>
+      <button class="head-btn" id="playPauseBtn" style="margin-left:6px;" title="Events & Alerts">&#10073;&#10073; Pause</button>
+      <button class="head-btn" id="speedBtn" style="margin-left:2px;">1x</button>
+      <button class="head-btn live-connect" id="mqttBtn" style="margin-left:6px;">MQTT</button>
+      <div class="topbar-spacer"></div>
+      <button class="icon-btn" id="bellBtn" title="Notifications (display only)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg><span class="badge" id="alertBadgeCount">0</span></button>
+      <button class="icon-btn" id="mqttDetailsBtn" title="MQTT Details"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="7" cy="6" r="1" fill="currentColor"/><circle cx="7" cy="12" r="1" fill="currentColor"/><circle cx="7" cy="18" r="1" fill="currentColor"/></svg></button>
+      <button class="icon-btn" id="settingsTopBtn" title="MQTT Settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82M4.6 9a1.65 1.65 0 00-.33-1.82"/></svg></button>
+      <button class="icon-btn" id="fullscreenTopBtn" title="Fullscreen"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3"/></svg></button>
+      <div class="clockblock"><div class="ct" id="topClock">--:--:--</div><div class="cd" id="topDate">----</div></div>
+    </header>
+
+    <div class="content">
+
+      <!-- KPI STRIP -->
+      <div class="kpi-strip" id="kpiStrip"></div>
+
+      <!-- ROW 2: 2D MAP / 3D VIEW / CELL INFO -->
+      <div class="row r2">
+        <div class="card map-card">
+          <div class="card-head"><h3>2D MAP</h3><div class="card-head-spacer"></div><select id="mapMetric"><option value="rsrp">RSRP</option><option value="rsrq">RSRQ</option><option value="sinr">SINR</option><option value="rssi">RSSI</option></select></div>
+          <div class="card-body">
+            <div id="map2d"></div>
+            <div class="map-controls">
+              <button id="zoomIn">+</button>
+              <button id="zoomOut">&#8722;</button>
+              <button id="recenterMap">&#8982;</button>
+            </div>
+            <div class="legend-box" id="mapLegendBox">
+              <div class="lt">RSRP (dBm)</div>
+              <div id="mapLegendRows">
+                <div class="legend-row"><span class="legend-dot" style="background:#22C55E"></span>&gt; -70 Excellent</div>
+                <div class="legend-row"><span class="legend-dot" style="background:#A3E635"></span>-70 to -80 Good</div>
+                <div class="legend-row"><span class="legend-dot" style="background:#EAB308"></span>-80 to -90 Fair</div>
+                <div class="legend-row"><span class="legend-dot" style="background:#FB923C"></span>-90 to -100 Poor</div>
+                <div class="legend-row"><span class="legend-dot" style="background:#EF4444"></span>&lt; -100 Bad</div>
+              </div>
+            </div>
+          </div>
+          <div class="map-footer"><span id="mapLatLon">Lat: --  Lon: --</span><span id="mapAglMsl">AGL: -- m &nbsp; MSL: -- m</span></div>
+        </div>
+
+        <div class="card view3d-card">
+          <div class="card-head"><h3>3D VIEW</h3><div class="card-head-spacer"></div>
+            <button class="head-btn" id="rotToggle">&#10073;&#10073; Rotate</button>
+          </div>
+          <div class="card-body view3d-body">
+            <div id="legend3dBottom" class="legend3d-bottom" aria-hidden="true">
+              <div class="legend3d-bottom-title">RSRP (dBm)</div>
+              <div class="legend3d-gradient"></div>
+              <div class="legend3d-labels">
+                <span>-60</span><span>-70</span><span>-80</span><span>-90</span><span>-100</span><span>-110</span>
+              </div>
+            </div>
+            <canvas id="canvas3d"></canvas>
+            <div class="v3-compass" id="v3Compass" aria-hidden="true">
+              <div class="v3-compass-n">N</div>
+              <div class="v3-compass-needle" id="v3CompassNeedle"></div>
+            </div>
+            <div class="v3-legend" id="v3Legend" aria-hidden="true">
+              <div class="v3-legend-title" id="v3LegendTitle">RSRP (dBm)</div>
+              <div class="v3-legend-wrap">
+                <div class="v3-legend-gradient"></div>
+                <div class="v3-legend-scale" id="v3LegendScale">
+                  <span>-60</span><span>-70</span><span>-80</span><span>-90</span><span>-100</span><span>-110</span>
+                </div>
+              </div>
+            </div>
+            <!-- <div class="v3-tel-overlay" aria-hidden="true"> -->
+              <!-- <div class="v3-tel-chip"><div class="v3-tc-label">Heading</div><div class="v3-tc-value" id="v3ChipHeading">--<span class="unit">°</span></div></div> -->
+              <!-- <div class="v3-tel-chip"><div class="v3-tc-label">Pitch</div><div class="v3-tc-value" id="v3ChipPitch">--<span class="unit">°</span></div></div> -->
+              <!-- <div class="v3-tel-chip"><div class="v3-tc-label">Roll</div><div class="v3-tc-value" id="v3ChipRoll">--<span class="unit">°</span></div></div> -->
+              <!-- <div class="v3-tel-chip"><div class="v3-tc-label">Speed</div><div class="v3-tc-value" id="v3ChipSpeed">--<span class="unit">m/s</span></div></div> -->
+              <!-- <div class="v3-tel-chip"><div class="v3-tc-label">Altitude</div><div class="v3-tc-value" id="v3ChipAlt">--<span class="unit">m</span></div></div> -->
+            <!-- </div> -->
+            <div class="view3d-overlay-top">
+              <select id="view3dMetric" class="view3d-select" aria-label="3D signal metric">
+                <option value="rsrp">RSRP</option>
+                <option value="rsrq">RSRQ</option>
+                <option value="sinr">SINR</option>
+                <option value="rssi">RSSI</option>
+              </select>
+              <div class="view3d-tools">
+                <button type="button" id="view3dReset" title="Reset camera">↔</button>
+                <button type="button" id="view3dAlignVertical" title="Align grid to 0° vertical altitude scale">↕</button>
+                <button type="button" id="view3dRotate" title="Auto rotate">▶</button>
+                <button type="button" id="view3dPause" title="Pause animation">Ⅱ</button>
+                <button type="button" id="view3dFullscreen" title="Fullscreen">⛶</button>
+              </div>
+            </div>
+            <div class="axis-label">Altitude (m)</div>
+            <div class="legend-vert" id="legend3d" style="display:none;">
+              <div class="lt">RSRP (dBm)</div>
+              <div style="display:flex;align-items:stretch;">
+                <div class="legend-grad"></div>
+                <div class="lscale"><span>-60</span><span>-70</span><span>-80</span><span>-90</span><span>-100</span><span>-110</span></div>
+              </div>
+            </div>
+            <div class="view3d-hud" style="display:none;">
+              <span>Heading <b id="hudHeading">--°</b></span>
+              <span>Pitch <b id="hudPitch">--°</b></span>
+              <span>Roll <b id="hudRoll">--°</b></span>
+              <span>Speed <b id="hudSpeed">-- m/s</b></span>
+            </div>
+          </div>
+          <div class="view3d-footer">
+            <span>Heading: <b id="hdgFoot">274&#176;</b></span>
+            <span>Pitch: <b id="pitchFoot">-3.2&#176;</b></span>
+            <span>Roll: <b id="rollFoot">1.8&#176;</b></span>
+            <span>Speed: <b id="spdFoot">-- m/s</b></span>
+			<span>Altitude: <b id="altFoot">-- m</b></span>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div class="card">
+            <div class="card-head"><h3>SERVING CELL</h3><div class="card-head-spacer"></div><span class="chip" id="ratChip">--</span></div>
+            <div class="info-grid">
+              <div class="info-item"><div class="il">CELL ID</div><div class="iv" id="cellId">--</div></div>
+              <div class="info-item"><div class="il">RSRP</div><div class="iv" id="scRsrp" style="color:var(--green)">--</div></div>
+              <div class="info-item"><div class="il">MCC / MNC</div><div class="iv" id="mccMnc">-- / --</div></div>
+              <div class="info-item"><div class="il">RSRQ</div><div class="iv" id="scRsrq" style="color:var(--yellow)">--</div></div>
+              <div class="info-item"><div class="il">TAC</div><div class="iv" id="tac">--</div></div>
+              <div class="info-item"><div class="il">SINR</div><div class="iv" id="scSinr" style="color:var(--green)">--</div></div>
+              <div class="info-item"><div class="il">BAND / EARFCN</div><div class="iv" id="bandEarfcn">-- / --</div></div>
+              <div class="info-item"><div class="il">RSSI</div><div class="iv" id="scRssi">--</div></div>
+              <div class="info-item"><div class="il">PCI</div><div class="iv" id="pci">--</div></div>
+              <div class="info-item"><div class="il">BANDWIDTH</div><div class="iv" id="bw">--</div></div>
+            </div>
+          </div>
+          <div class="card" style="flex:1;">
+            <div class="card-head"><h3>NEIGHBOR CELLS</h3><div class="card-head-spacer"></div><input id="neighborSearch" class="table-search" placeholder="Search PCI/band"/></div>
+            <div class="card-scroll">
+              <table class="data-table">
+                <thead id="neighborHead"><tr>
+                  <th data-key="pci" data-label="PCI">PCI</th>
+                  <th data-key="earfcn" data-label="EARFCN">EARFCN</th>
+                  <th data-key="band" data-label="Band">Band</th>
+                  <th data-key="rsrp" data-label="RSRP">RSRP</th>
+                  <th data-key="rsrq" data-label="RSRQ">RSRQ</th>
+                  <th data-key="sinr" data-label="SINR">SINR</th>
+                </tr></thead>
+                <tbody id="neighborBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ROW 3: RF ANALYTICS / THROUGHPUT / TELEMETRY -->
+      <div class="row r3">
+        <div class="card chart-card">
+          <div class="card-head"><h3>RF ANALYTICS</h3><span class="sub" id="rfRangeLabel">(Last 10 minutes)</span><div class="card-head-spacer"></div>
+            <div class="chart-legend">
+              <span class="chip-leg" data-key="rsrp"><i style="background:var(--green)"></i>RSRP</span>
+              <span class="chip-leg" data-key="rsrq"><i style="background:var(--yellow)"></i>RSRQ</span>
+              <span class="chip-leg" data-key="sinr"><i style="background:var(--cyan)"></i>SINR</span>
+              <span class="chip-leg" data-key="rssi"><i style="background:var(--purple)"></i>RSSI</span>
+            </div>
+          </div>
+          <div class="card-body rf-history-body">
+              <svg id="rfChart" viewBox="0 0 620 220" width="100%" height="220" preserveAspectRatio="none"></svg>
+              <div class="range-toggle" id="rfRangeToggle">
+              <button class="range-btn" data-range="1">1m</button>
+              <button class="range-btn" data-range="5">5m</button>
+              <button class="range-btn active" data-range="10">10m</button>
+              <button class="range-btn" data-range="15">15m</button>
+              <button class="range-btn" data-range="30">30m</button>
+              <button class="range-btn" data-range="60">1 hr</button>
+            </div>
+            </div>
+        </div>
+
+        <div class="card chart-card">
+          <div class="card-head"><h3>THROUGHPUT &amp; LATENCY</h3><div class="card-head-spacer"></div>
+            <div class="chart-legend">
+              <span class="chip-leg" data-key="dl"><i style="background:var(--blue)"></i>DL</span>
+              <span class="chip-leg" data-key="ul"><i style="background:var(--purple)"></i>UL</span>
+              <span class="chip-leg" data-key="lat"><i style="background:var(--green)"></i>Latency</span>
+            </div>
+          </div>
+          <div class="card-body"><svg id="tpChart" viewBox="0 0 620 220" width="100%" height="220" preserveAspectRatio="none"></svg></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>FLIGHT TELEMETRY</h3></div>
+          <div class="list-rows" id="telemetryRows"></div>
+        </div>
+      </div>
+
+      <!-- ROW 4: EVENTS / SCATTER / HANDOVER / SYSTEM STATUS -->
+      <div class="row r4">
+        <div class="card">
+          <div class="card-head"><h3>EVENTS &amp; ALERTS</h3><div class="card-head-spacer"></div><span class="link">View All</span></div>
+          <div class="events-list" id="eventsList"></div>
+        </div>
+
+        <div class="card chart-card">
+          <div class="card-head scatter-head"><h3>SIGNAL QUALITY OVER ALTITUDE</h3><div class="scatter-metric-buttons" id="scatterMetricButtons">
+              <button type="button" class="scatter-metric-btn active" data-scatter-metric="rsrp">RSRP</button>
+              <button type="button" class="scatter-metric-btn" data-scatter-metric="rsrq">RSRQ</button>
+              <button type="button" class="scatter-metric-btn" data-scatter-metric="sinr">SINR</button>
+              <button type="button" class="scatter-metric-btn" data-scatter-metric="rssi">RSSI</button>
+            </div></div>
+          <div class="card-body"><svg id="scatterChart" viewBox="0 0 340 280" width="100%" height="280" preserveAspectRatio="none"></svg></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>CELL HANDOVER HISTORY</h3></div>
+          <div class="timeline" id="handoverList"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>SYSTEM STATUS</h3></div>
+          <div class="list-rows" id="systemStatusRows"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="mqtt-modal" id="mqttModal">
+  <div class="mqtt-box">
+    <div class="mqtt-panel-head">
+      <div>
+        <h2 id="mqttModalTitle">MQTT DETAILS</h2>
+        <p id="mqttModalDescription">Current MQTT broker and WebSocket connection information.</p>
+      </div>
+      <div class="mqtt-panel-tabs">
+        <button type="button" class="mqtt-panel-tab active" id="mqttDetailsTab">Details</button>
+        <button type="button" class="mqtt-panel-tab" id="mqttSettingsTab">Settings</button>
+      </div>
+    </div>
+
+    <section id="mqttDetailsPanel" class="mqtt-info-panel">
+      <div class="mqtt-detail-grid">
+        <div class="mqtt-detail-card">
+          <label>MQTT Server</label>
+          <strong id="detailMqttHost">44d6b26652c8472c92964c620e7ffae0.s1.eu.hivemq.cloud</strong>
+        </div>
+        <div class="mqtt-detail-card">
+          <label>WebSocket Port</label>
+          <strong id="detailMqttPort">8884</strong>
+        </div>
+        <div class="mqtt-detail-card">
+          <label>Base Topic</label>
+          <strong id="detailMqttTopic">drone_telemetry</strong>
+        </div>
+        <div class="mqtt-detail-card">
+          <label>Transport</label>
+          <strong>Secure MQTT over WebSocket</strong>
+        </div>
+        <div class="mqtt-detail-card full">
+          <label>WebSocket Endpoint</label>
+          <strong id="detailMqttEndpoint">wss://44d6b26652c8472c92964c620e7ffae0.s1.eu.hivemq.cloud:8884/mqtt</strong>
+        </div>
+        <div class="mqtt-detail-card">
+          <label>Connection Status</label>
+          <strong id="detailMqttStatus">Not connected</strong>
+        </div>
+      </div>
+    </section>
+
+    <section id="mqttSettingsPanel" class="mqtt-info-panel" style="display:none;">
+      <div class="mqtt-settings-grid">
+        <div class="mqtt-field full">
+          <label>MQTT Server / Host</label>
+          <input id="mqttHost" value="44d6b26652c8472c92964c620e7ffae0.s1.eu.hivemq.cloud">
+        </div>
+        <div class="mqtt-field">
+          <label>Secure WebSocket Port</label>
+          <input id="mqttPort" value="8884">
+        </div>
+        <div class="mqtt-field">
+          <label>Base Topic</label>
+          <input id="mqttTopic" value="drone_telemetry">
+        </div>
+        <div class="mqtt-field">
+          <label>Username</label>
+          <input id="mqttUser" value="iitb" autocomplete="username">
+        </div>
+        <div class="mqtt-field">
+          <label>Password</label>
+          <input id="mqttPass" type="password" value="12345678" autocomplete="current-password">
+        </div>
+      </div>
+    </section>
+
+    <div class="mqtt-actions">
+      <button id="mqttClose" type="button">Close</button>
+      <button class="primary" id="mqttConnect" type="button">Connect Live</button>
+    </div>
+    <div class="mqtt-status" id="mqttConfigStatus"></div>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+  let BASE_LAT = 19.0760, BASE_LON = 72.8777;
+  let liveMode = true;
+
+  /* ---------------- helpers ---------------- */
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+  function jitter(v,amt,min,max){ return clamp(v+(Math.random()-0.5)*amt, min, max); }
+  function pad(n){ return n.toString().padStart(2,'0'); }
+  function colorForRsrp(r){
+    if(r > -70) return '#22C55E';
+    if(r > -80) return '#A3E635';
+    if(r > -90) return '#EAB308';
+    if(r > -100) return '#FB923C';
+    return '#EF4444';
+  }
+  function iconSvg(path){ return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${path}</svg>`; }
+
+  /* ---------------- nav ---------------- */
+  const navTargets = {
+    'Overview': () => document.querySelector('.content')?.scrollTo({top:0, behavior:'smooth'}),
+    'RF Map (2D)': () => document.getElementById('map2d')?.scrollIntoView({behavior:'smooth', block:'center'}),
+    'RF Map (3D)': () => document.getElementById('canvas3d')?.scrollIntoView({behavior:'smooth', block:'center'}),
+    'Cellular': () => document.getElementById('cellId')?.scrollIntoView({behavior:'smooth', block:'center'}),
+    'RF Analytics': () => document.getElementById('rfChart')?.scrollIntoView({behavior:'smooth', block:'center'}),
+    'Flight Telemetry': () => document.getElementById('telemetryRows')?.scrollIntoView({behavior:'smooth', block:'center'}),
+    'Network': () => document.getElementById('systemStatusRows')?.scrollIntoView({behavior:'smooth', block:'center'}),
+    'Events & Alerts': () => document.getElementById('eventsList')?.scrollIntoView({behavior:'smooth', block:'center'}),
+    'Replay': () => document.getElementById('rfChart')?.scrollIntoView({behavior:'smooth', block:'center'}),
+    'Settings': () => openMqtt()
+  };
+  document.querySelectorAll('.nav-item').forEach(it=>{
+    it.onclick = ()=>{
+      document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+      it.classList.add('active');
+      const fn=navTargets[it.dataset.n]; if(fn) fn();
+    };
+  });
+
+  /* ---------------- state ---------------- */
+  let state = {
+    missionSec:0, rsrp:null, rsrq:null, sinr:null, rssi:null,
+    dl:null, ul:null, latency:null, altAgl:null, altMsl:null, speed:null,
+    heading:null, pitch:null, roll:null, climb:null, lat:null, lon:null,
+    sats:null, gpsFix:null, battPct:null, battV:null, dataRate:null, telemetryAgeMs:null,
+    mavlinkAgeMs:null, fcTimeBootMs:null, fcArmed:null
+  };
+  let wpIndex=0, tick=0;
+  const waypoints=[];
+  (function build(){
+    const rows=6, legLen=0.006, rowSpacing=0.0012;
+    for(let r=0;r<rows;r++){
+      const latOff=r*rowSpacing;
+      if(r%2===0){ waypoints.push([latOff,0]); waypoints.push([latOff,legLen]); }
+      else{ waypoints.push([latOff,legLen]); waypoints.push([latOff,0]); }
+    }
+  })();
+
+  const rfBuf = { rsrp:[], rsrq:[], sinr:[], rssi:[] };
+  const tpBuf = { dl:[], ul:[], lat:[] };
+  const scatterBuf = [];
+  const live3dBuf = [];
+  let mqttClient = null;
+  let lastTelemetryTs = null;
+  let lastSignalTs = null;
+  let lastNetworkTs = null;
+  let liveMessageCount = 0;
+  let liveSecond = Math.floor(Date.now()/1000);
+  let liveMsgRate = 0;
+  let lastSignal = {};
+  let lastNetwork = {};
+  let lastPointKey = '';
+  // Rolling history: keep a real 60 minutes regardless of MQTT message rate.
+  const HISTORY_MS = 60 * 60 * 1000;
+  const MAX_HISTORY_SAMPLES = 12000;
+  let rangeMinutes = 10;
+  const bufTimes = {
+    rsrp:[], rsrq:[], sinr:[], rssi:[],
+    dl:[], ul:[], lat:[]
+  };
+
+  function pushBuf(buf, key, val, ts){
+    const n=Number(val);
+    if(!Number.isFinite(n)) return;
+    if(!buf[key]) buf[key]=[];
+    if(!bufTimes[key]) bufTimes[key]=[];
+
+    const t=Number.isFinite(Number(ts)) ? Number(ts) : Date.now();
+    buf[key].push(n);
+    bufTimes[key].push(t);
+
+    const cutoff=Date.now()-HISTORY_MS;
+    while(buf[key].length && bufTimes[key][0] < cutoff){
+      buf[key].shift();
+      bufTimes[key].shift();
+    }
+    while(buf[key].length > MAX_HISTORY_SAMPLES){
+      buf[key].shift();
+      bufTimes[key].shift();
+    }
+  }
+
+  function recentBuf(key, minutes){
+    const data=rfBuf[key] || [];
+    const times=bufTimes[key] || [];
+    const cutoff=Date.now()-minutes*60*1000;
+    let i=0;
+    while(i<times.length && times[i] < cutoff) i++;
+    return data.slice(i);
+  }
+  
+  function recentBufTimes(key, minutes){
+  const times = bufTimes[key] || [];
+  const cutoff = Date.now() - minutes * 60 * 1000;
+
+  let i = 0;
+  while(i < times.length && times[i] < cutoff) i++;
+
+  return times.slice(i);
+  }
+
+  function recentTpBuf(key, minutes){
+    const data=tpBuf[key] || [];
+    const times=bufTimes[key] || [];
+    const cutoff=Date.now()-minutes*60*1000;
+    let i=0;
+    while(i<times.length && times[i] < cutoff) i++;
+    return data.slice(i);
+  }
+
+  /* ---------------- KPI strip build ---------------- */
+  const kpiDefs = [
+    {id:'rsrp', label:'RSRP', unit:'dBm', color:'var(--green)', sub:'Live average: --'},
+    {id:'rsrq', label:'RSRQ', unit:'dB', color:'var(--yellow)', sub:'Live average: --'},
+    {id:'sinr', label:'SINR', unit:'dB', color:'var(--green)', sub:'Live average: --'},
+    {id:'dl', label:'DL THROUGHPUT', unit:'Mbps', color:'var(--blue)', sub:'Live: --'},
+    {id:'ul', label:'UL THROUGHPUT', unit:'Mbps', color:'var(--purple)', sub:'Live: --'},
+    {id:'latency', label:'LATENCY', unit:'ms', color:'var(--green)', sub:'Live: --'},
+    {id:'altAgl', label:'ALTITUDE (AGL)', unit:'m', color:'var(--cyan)', sub:'MSL: --'},
+    {id:'speed', label:'SPEED', unit:'m/s', color:'var(--orange)', sub:'-- km/h'},
+  ];
+  const kpiStrip = document.getElementById('kpiStrip');
+  kpiDefs.forEach(k=>{
+    const el = document.createElement('div');
+    el.className='kpi-card';
+    el.innerHTML = `<label>${k.label}</label>
+      <div class="kv" id="kv-${k.id}" style="color:${k.color}">--<span>${k.unit}</span></div>
+      <svg class="spark" id="spark-${k.id}" viewBox="0 0 100 24" width="100%" height="24" preserveAspectRatio="none">
+        <polyline fill="none" stroke="${k.color}" stroke-width="2" points=""/>
+      </svg>
+      <div class="ksub" id="sub-${k.id}">${k.sub}</div>`;
+    kpiStrip.appendChild(el);
+  });
+  const kpiBuf = {}; kpiDefs.forEach(k=> kpiBuf[k.id]=[]);
+  function updateKpi(id, val, decimals, subText){
+    const el=document.getElementById('kv-'+id);
+    const spark=document.querySelector('#spark-'+id+' polyline');
+    const buf=kpiBuf[id] || (kpiBuf[id]=[]);
+    const n=Number(val);
+
+    if(!Number.isFinite(n)){
+      if(el){
+        const unit=el.querySelector('span')?.textContent || '';
+        el.innerHTML='--<span>'+unit+'</span>';
+      }
+      if(subText) document.getElementById('sub-'+id).textContent=subText;
+      if(spark) spark.setAttribute('points','');
+      return;
+    }
+
+    if(el){
+      const unit=el.querySelector('span')?.textContent || '';
+      el.innerHTML=n.toFixed(decimals)+'<span>'+unit+'</span>';
+    }
+    if(subText) document.getElementById('sub-'+id).textContent=subText;
+
+    buf.push(n);
+    if(buf.length>30) buf.shift();
+
+    const min=Math.min(...buf), max=Math.max(...buf);
+    const range=(max-min)||1;
+    const pts=buf.map((v,i)=>{
+      const x=buf.length===1 ? 0 : (i/(buf.length-1))*100;
+      const y=24-((v-min)/range)*22-1;
+      return `${x},${y}`;
+    }).join(' ');
+    if(spark) spark.setAttribute('points',pts);
+  }
+
+  /* ---------------- Leaflet 2D map ---------------- */
+  const map = L.map('map2d', {zoomControl:false, attributionControl:false}).setView([BASE_LAT,BASE_LON], 12);
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19}).addTo(map);
+  L.control.attribution({prefix:false, position:'bottomright'}).addAttribution('Esri').addTo(map);
+  document.getElementById('zoomIn').onclick = ()=> map.zoomIn();
+  document.getElementById('zoomOut').onclick = ()=> map.zoomOut();
+  document.getElementById('recenterMap').onclick = ()=> { if(Number.isFinite(state.lat)&&Number.isFinite(state.lon)) map.setView([state.lat,state.lon], Math.max(map.getZoom(),16)); };
+  let autoFollowMap=true;
+  map.on('dragstart',()=>autoFollowMap=false);
+
+  const droneIcon = L.divIcon({className:'', html:`<svg width="22" height="22" viewBox="0 0 24 24" style="transform:rotate(0deg)"><polygon points="12,2 18,20 12,15.5 6,20" fill="#fff" stroke="#0A0F1A" stroke-width="1"/></svg>`, iconSize:[22,22], iconAnchor:[11,11]});
+  const droneMarker = L.marker([BASE_LAT,BASE_LON], {icon:droneIcon}).addTo(map);
+  const pathLayer = L.layerGroup().addTo(map);
+  let lastPt = null;
+
+  /* ---------------- 3D canvas view ---------------- */
+  const canvas = document.getElementById('canvas3d');
+  const ctx = canvas.getContext('2d');
+  function resizeCanvas(){
+    const r = canvas.parentElement.getBoundingClientRect();
+    canvas.width = r.width * devicePixelRatio; canvas.height = r.height * devicePixelRatio;
+    canvas.style.width = r.width+'px'; canvas.style.height = r.height+'px';
+  }
+  resizeCanvas();
+  window.addEventListener('resize', ()=>{ resizeCanvas(); setTimeout(()=>map.invalidateSize(),100); });
+
+  // synthetic spiral descent path with rsrp-colored points
+  let spiralPts = [];
+  let lastProjected3dPoints = [];
+
+  let rotAngle = 0.6, tiltAngle = 0.64, autoRotate = true, zoomScale = 1;
+  let panX = 0, panY = 0;
+  const rotBtn = document.getElementById('rotToggle');
+  function setAutoRotate(v){
+    autoRotate = v;
+    rotBtn.innerHTML = autoRotate ? '&#10073;&#10073; Rotate' : '&#9654; Rotate';
+  }
+  rotBtn.onclick = function(){ setAutoRotate(!autoRotate); };
+
+  // 3D map drag: left-drag pans the complete scene like the 2D map.
+  // Right-drag keeps the existing orbit/rotate behavior.
+  let dragging = false, dragMode = 'pan', lastDragX = 0, lastDragY = 0;
+  let dragStartX = 0, dragStartY = 0;
+  canvas.addEventListener('mousedown', e=>{
+    dragging = true;
+    dragMode = (e.button === 2) ? 'orbit' : 'pan';
+    lastDragX = e.clientX;
+    lastDragY = e.clientY;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    setAutoRotate(false);
+    e.preventDefault();
+  });
+  window.addEventListener('mouseup', e=>{
+    if(!dragging) return;
+    const moved = Math.hypot(e.clientX-dragStartX,e.clientY-dragStartY);
+    const wasPan = dragMode === 'pan';
+    dragging = false;
+    if(wasPan && e.button === 0 && moved < 5){
+      const rect=canvas.getBoundingClientRect();
+      const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+      let hit=null, bestDist=12;
+      for(let i=lastProjected3dPoints.length-1;i>=0;i--){
+        const p=lastProjected3dPoints[i];
+        if(!p || !p.q) continue;
+        const dist=Math.hypot(p.q.x-mx,p.q.y-my);
+        if(dist<=bestDist){bestDist=dist;hit=p;}
+      }
+      let popup=document.getElementById('view3dPointPopup');
+      if(hit){
+        if(!popup){
+          popup=document.createElement('div');
+          popup.id='view3dPointPopup';
+          popup.style.cssText="position:absolute;z-index:30;pointer-events:none;background:rgba(9,16,27,.94);border:1px solid #334155;border-radius:7px;padding:8px 10px;color:#E7ECF3;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.65;box-shadow:0 6px 18px rgba(0,0,0,.45);min-width:145px;";
+          canvas.parentElement.appendChild(popup);
+        }
+        const d=hit.time instanceof Date?hit.time:new Date(hit.time);
+        const timeText=Number.isNaN(d.getTime())?'--':d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+        const fmt=(v,n)=>Number.isFinite(Number(v))?Number(v).toFixed(n):'--';
+        popup.innerHTML='<b>'+timeText+'</b><br>PCI <b>'+(Number.isFinite(Number(hit.pci))?Math.round(Number(hit.pci)):'--')+'</b><br>Altitude <b>'+fmt(hit.z,1)+' m</b><br>RSRP <b>'+fmt(hit.rsrp,0)+' dBm</b><br>RSRQ <b>'+fmt(hit.rsrq,0)+' dB</b><br>SINR <b>'+fmt(hit.sinr,1)+' dB</b>';
+        const pw=160,ph=125;
+        popup.style.left=Math.max(6,Math.min(mx+12,rect.width-pw-6))+'px';
+        popup.style.top=Math.max(6,Math.min(my+12,rect.height-ph-6))+'px';
+        popup.style.display='block';
+      }else if(popup){popup.style.display='none';}
+    }
+  });
+  window.addEventListener('mousemove', e=>{
+    if(!dragging) return;
+    const dx=e.clientX-lastDragX, dy=e.clientY-lastDragY;
+    lastDragX=e.clientX; lastDragY=e.clientY;
+    if(dragMode==='pan'){
+      const dpr=window.devicePixelRatio||1;
+      panX+=dx*dpr; panY+=dy*dpr;
+    }else{
+      rotAngle+=dx*0.008;
+      tiltAngle=clamp(tiltAngle-dy*0.008,-1.3,1.3);
+    }
+  });
+  canvas.addEventListener('contextmenu', e=>e.preventDefault());
+
+  // Touch drag pans the complete scene.
+  canvas.addEventListener('touchstart', e=>{
+    dragging = true;
+    dragMode = 'pan';
+    lastDragX = e.touches[0].clientX;
+    lastDragY = e.touches[0].clientY;
+    setAutoRotate(false);
+  }, {passive:true});
+  window.addEventListener('touchend', ()=>{ dragging=false; });
+  window.addEventListener('touchmove', e=>{
+    if(!dragging || dragMode !== 'pan') return;
+    const dx = e.touches[0].clientX - lastDragX;
+    const dy = e.touches[0].clientY - lastDragY;
+    lastDragX = e.touches[0].clientX;
+    lastDragY = e.touches[0].clientY;
+    const dpr = window.devicePixelRatio || 1;
+    panX += dx * dpr;
+    panY += dy * dpr;
+  }, {passive:true});
+  // scroll-to-zoom
+  canvas.addEventListener('wheel', e=>{
+    e.preventDefault();
+    // Multiplicative zoom gives a full, smooth zoom range without the
+    // dead-zone feeling of a small linear delta.
+    const factor = Math.exp(-e.deltaY * 0.0035);
+    zoomScale = clamp(zoomScale * factor, 0.01, 100.0);
+  }, {passive:false});
+
+  function project(p, angle){
+    // simple rotation around Y then isometric-ish projection
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const x1 = p.x*cos - p.y*sin;
+    const y1 = p.x*sin + p.y*cos;
+    const scale = 1.7;
+    const screenX = x1*scale;
+    const screenY = -p.z*1.05 + y1*0.55;
+    return {x:screenX, y:screenY, depth:y1};
+  }
+
+  let view3dMetric='rsrp';
+  let view3dPaused=false;
+  // Metric-specific thresholds used consistently by BOTH 2D and 3D views.
+  // Each metric has its own meaningful Excellent/Good/Fair/Poor/Bad ranges.
+  const metricThresholdCfg={
+    rsrp:{label:'RSRP (dBm)',unit:'dBm',min:-110,max:-60,thresholds:[-70,-80,-90,-100]},
+    rsrq:{label:'RSRQ (dB)',unit:'dB',min:-25,max:-5,thresholds:[-10,-15,-20,-25]},
+    sinr:{label:'SINR (dB)',unit:'dB',min:-5,max:25,thresholds:[20,10,0,-5]},
+    rssi:{label:'RSSI (dBm)',unit:'dBm',min:-100,max:-50,thresholds:[-65,-75,-85,-95]}
+  };
+  const view3dMetricCfg=metricThresholdCfg;
+  const METRIC_COLORS=['#22C55E','#A3E635','#EAB308','#FB923C','#EF4444'];
+  const METRIC_NAMES=['Excellent','Good','Fair','Poor','Bad'];
+
+  function metricBand(metric,v){
+    if(!Number.isFinite(v)) return -1;
+    const t=metricThresholdCfg[metric].thresholds;
+    if(v>=t[0]) return 0;
+    if(v>=t[1]) return 1;
+    if(v>=t[2]) return 2;
+    if(v>=t[3]) return 3;
+    return 4;
+  }
+
+  function metricLegendRows(metric){
+    const c=metricThresholdCfg[metric];
+    const t=c.thresholds;
+    const fmt=v=>Number.isInteger(v)?String(v):v.toFixed(1);
+    return [
+      `&gt;= ${fmt(t[0])} ${METRIC_NAMES[0]}`,
+      `${fmt(t[1])} to ${fmt(t[0])} ${METRIC_NAMES[1]}`,
+      `${fmt(t[2])} to ${fmt(t[1])} ${METRIC_NAMES[2]}`,
+      `${fmt(t[3])} to ${fmt(t[2])} ${METRIC_NAMES[3]}`,
+      `&lt; ${fmt(t[3])} ${METRIC_NAMES[4]}`
+    ];
+  }
+
+  function updateMetricLegends(){
+    const c=metricThresholdCfg[mapMetric];
+    const rows=document.getElementById('mapLegendRows');
+    const box=document.getElementById('mapLegendBox');
+    if(box) box.querySelector('.lt').textContent=c.label;
+    if(rows){
+      rows.innerHTML=metricLegendRows(mapMetric).map((txt,i)=>
+        `<div class="legend-row"><span class="legend-dot" style="background:${METRIC_COLORS[i]}"></span>${txt}</div>`
+      ).join('');
+    }
+  }
+  function metric3dValue(p){
+    const v=view3dMetric==='rsrq'?p.rsrq:view3dMetric==='sinr'?p.sinr:view3dMetric==='rssi'?p.rssi:p.rsrp;
+    return Number.isFinite(v)?v:null;
+  }
+  function color3d(v){
+    const band=metricBand(view3dMetric,v);
+    return band<0?'#64748B':METRIC_COLORS[band];
+  }
+  function update3dLegend(){
+    const box=document.getElementById('legend3d');
+    const bottom=document.getElementById('legend3dBottom');
+    const v3title=document.getElementById('v3LegendTitle');
+    const v3scale=document.getElementById('v3LegendScale');
+    const c=view3dMetricCfg[view3dMetric];
+    const t=c.thresholds;
+    const fmt=v=>Number.isInteger(v)?String(v):v.toFixed(1);
+    // Six boundary labels for the five threshold bands.
+    const vals=[c.max,t[0],t[1],t[2],t[3],c.min];
+    const scaleHtml=vals.map(v=>`<span>${fmt(v)}</span>`).join('');
+    if(box){
+      box.querySelector('.lt').textContent=c.label;
+      box.querySelector('.lscale').innerHTML=scaleHtml;
+    }
+    if(bottom){
+      const title=bottom.querySelector('.legend3d-bottom-title');
+      const labels=bottom.querySelector('.legend3d-labels');
+      if(title) title.textContent=c.label;
+      if(labels) labels.innerHTML=scaleHtml;
+    }
+    if(v3title) v3title.textContent=c.label;
+    if(v3scale) v3scale.innerHTML=scaleHtml;
+  }
+
+  // Compass needle + telemetry chips overlay (top/bottom of the 3D view), mirrors the live `state`
+  function updateV3Overlay(){
+    const h=document.getElementById('v3ChipHeading');
+    if(h) h.innerHTML=(Number.isFinite(state.heading)?Math.round(state.heading):'--')+'<span class="unit">°</span>';
+    const p=document.getElementById('v3ChipPitch');
+    if(p) p.innerHTML=(Number.isFinite(state.pitch)?state.pitch.toFixed(1):'--')+'<span class="unit">°</span>';
+    const r=document.getElementById('v3ChipRoll');
+    if(r) r.innerHTML=(Number.isFinite(state.roll)?state.roll.toFixed(1):'--')+'<span class="unit">°</span>';
+    const s=document.getElementById('v3ChipSpeed');
+    if(s) s.innerHTML=(Number.isFinite(state.speed)?state.speed.toFixed(1):'--')+'<span class="unit">m/s</span>';
+    const a=document.getElementById('v3ChipAlt');
+    if(a) a.innerHTML=(Number.isFinite(state.altAgl)?Math.round(state.altAgl):'--')+'<span class="unit">m</span>';
+    const needle=document.getElementById('v3CompassNeedle');
+    if(needle) needle.style.transform=`rotate(${Number.isFinite(state.heading)?state.heading:0}deg)`;
+  }
+  function terrainY(x,y){
+    return Math.sin(x*.015)*2.5+Math.cos(y*.018)*2.0+Math.sin((x+y)*.008)*1.8;
+  }
+
+  function draw3d(){
+    const canvas=document.getElementById('canvas3d');
+    if(!canvas) return;
+    const ctx=canvas.getContext('2d');
+    const dpr=window.devicePixelRatio||1;
+    const r=canvas.getBoundingClientRect();
+    const W=Math.max(1,r.width), H=Math.max(1,r.height);
+    const cw=Math.round(W*dpr), ch=Math.round(H*dpr);
+    if(canvas.width!==cw || canvas.height!==ch){ canvas.width=cw; canvas.height=ch; }
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,W,H);
+
+    updateV3Overlay();
+
+    // Background
+    const bg=ctx.createLinearGradient(0,0,0,H);
+    bg.addColorStop(0,'#06111b'); bg.addColorStop(.55,'#071824'); bg.addColorStop(1,'#020a10');
+    ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+
+    // Auto-rotate the orbit camera when enabled (and not mid-drag)
+    if(autoRotate && !view3dPaused && !dragging){ rotAngle += 0.0022; }
+
+    // IMPORTANT: use the actual live MQTT buffer.
+    const pts=live3dBuf.filter(p=>
+      Number.isFinite(Number(p.x)) &&
+      Number.isFinite(Number(p.y)) &&
+      Number.isFinite(Number(p.z))
+    );
+
+    if(!pts.length){
+      lastProjected3dPoints = [];
+      const pointPopup=document.getElementById('view3dPointPopup');
+      if(pointPopup) pointPopup.style.display='none';
+      ctx.fillStyle='#9aa8ba';
+      ctx.font='13px var(--mono)';
+      ctx.textAlign='center';
+      ctx.fillText('Waiting for live GPS + altitude + RF telemetry…',W/2,H/2);
+      ctx.textAlign='left';
+      return;
+    }
+
+    // Bounds from the ACTUAL accumulated flight track.
+    // Do not replace or simplify this route: every point in live3dBuf is
+    // projected below, so the complete 3D flight path remains visible.
+    const xs=pts.map(p=>Number(p.x));
+    const ys=pts.map(p=>Number(p.y));
+    const zs=pts.map(p=>Math.max(0,Number(p.z)||0));
+
+    let minX=Math.min(...xs), maxX=Math.max(...xs);
+    let minY=Math.min(...ys), maxY=Math.max(...ys);
+    let maxZ=Math.max(0,...zs);
+
+    const spanX=Math.max(1,maxX-minX);
+    const spanY=Math.max(1,maxY-minY);
+    const horizontalSpan=Math.max(spanX,spanY,30);
+    const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+
+    // Nice altitude ceiling. This is the SAME scale used by the altitude
+    // ruler, so the ruler and the flight path always represent the same
+    // real altitude values.
+    function niceAltitudeTop(z){
+      const target=Math.max(10,z);
+      const raw=target/5;
+      const mag=Math.pow(10,Math.floor(Math.log10(raw)));
+      const n=raw/mag;
+      const step=n<=1?1:n<=2?2:n<=5?5:10;
+      const niceStep=step*mag;
+      return Math.max(10,Math.ceil(target/niceStep)*niceStep);
+    }
+    const altitudeTop=Math.max(10,niceAltitudeTop(maxZ));
+
+    // Keep the 3D look close to the reference video: altitude is displayed
+    // with controlled visual exaggeration, but all labels remain real metres.
+    const verticalExaggeration=clamp(
+      (horizontalSpan/Math.max(altitudeTop,10))*0.45,
+      0.9,
+      7.0
+    );
+
+    const az=rotAngle;
+    const tilt=tiltAngle;
+    const ca=Math.cos(az), sa=Math.sin(az);
+    const ct=Math.cos(tilt), st=Math.sin(tilt);
+
+    // Perspective camera. The camera is fitted against the COMPLETE 3D
+    // route (X/Y/Z), not only its horizontal bounding box.
+    const F=700;
+    const OFFSET=500;
+    const targetLeft=18, targetRight=18, targetTop=35, targetBottom=72;
+
+    function cameraProjection(camDist){
+      let minPX=Infinity,maxPX=-Infinity,minPY=Infinity,maxPY=-Infinity;
+      let minDen=Infinity;
+
+      for(const p of pts){
+        const wx=Number(p.x)-cx;
+        const wy=Number(p.y)-cy;
+        const wz=Math.max(0,Number(p.z)||0)*verticalExaggeration;
+
+        const rx=wx*ca-wy*sa;
+        const ry=wx*sa+wy*ca;
+        const y2=ry*ct-wz*st;
+        const z2=ry*st+wz*ct;
+
+        const den=camDist+y2+OFFSET;
+        minDen=Math.min(minDen,den);
+        if(den<=20) return {fit:false,minDen};
+
+        const persp=F/den;
+        const sx=W/2+rx*persp;
+        const sy=H*.61-z2*persp;
+
+        minPX=Math.min(minPX,sx);
+        maxPX=Math.max(maxPX,sx);
+        minPY=Math.min(minPY,sy);
+        maxPY=Math.max(maxPY,sy);
+      }
+
+      return {
+        fit:
+          minPX>=targetLeft &&
+          maxPX<=W-targetRight &&
+          minPY>=targetTop &&
+          maxPY<=H-targetBottom,
+        minPX,maxPX,minPY,maxPY,minDen
+      };
+    }
+
+    // Find the smallest safe camera distance that fits the COMPLETE route.
+    let low=Math.max(20,Math.abs(horizontalSpan)*0.05);
+    let high=Math.max(1000,horizontalSpan*8,altitudeTop*verticalExaggeration*8);
+
+    // Ensure the upper bound definitely fits.
+    for(let i=0;i<12 && !cameraProjection(high).fit;i++) high*=2;
+
+    for(let i=0;i<32;i++){
+      const mid=(low+high)/2;
+      if(cameraProjection(mid).fit) high=mid;
+      else low=mid;
+    }
+
+    // zoomScale is now an independent user zoom multiplier.
+    // 1.0 = full-route fit, >1 zooms in, <1 zooms out.
+    const fitCamDist=high;
+    const camDist=Math.max(35,fitCamDist);
+
+    function project(x,y,z){
+      const wx=x-cx, wy=y-cy, wz=Math.max(0,z)*verticalExaggeration;
+      const rx=wx*ca-wy*sa;
+      const ry=wx*sa+wy*ca;
+      const y2=ry*ct-wz*st;
+      const z2=ry*st+wz*ct;
+      const den=Math.max(20,camDist+y2+OFFSET);
+      // User zoom is applied AFTER route fitting. This makes wheel zoom a true
+      // camera zoom and prevents the automatic route-fit calculation from
+      // cancelling the user's zoom.
+      const persp=(F/den)*zoomScale;
+      return {
+        x:W/2+rx*persp+panX,
+        y:H*.61-z2*persp+panY,
+        scale:persp,
+        depth:y2
+      };
+    }
+
+    // Ground plane.
+    ctx.save();
+    ctx.strokeStyle='rgba(34,197,94,.14)';
+    ctx.lineWidth=1;
+
+    // Large ground grid: deliberately independent of the flight-path size.
+    // Enlarging the grid must NOT enlarge/shrink the actual route.
+    const gridHalf=Math.max(horizontalSpan*2.5,200);
+    for(let i=-8;i<=8;i++){
+      const f=i/8*gridHalf;
+      let a=project(-gridHalf,f,0), b=project(gridHalf,f,0);
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+      a=project(f,-gridHalf,0); b=project(f,gridHalf,0);
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    }
+
+    // Range rings on the same enlarged ground plane.
+    ctx.strokeStyle='rgba(34,197,94,.16)';
+    for(let rr=1;rr<=5;rr++){
+      const rad=gridHalf*.13*rr;
+      ctx.beginPath();
+      for(let a=0;a<=Math.PI*2+.05;a+=Math.PI/90){
+        const q=project(Math.cos(a)*rad,Math.sin(a)*rad,0);
+        if(a===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Altitude ruler — uses the SAME projection/altitude mapping as the
+    // flight path, so every tick corresponds to the actual Z value.
+    const rulerGround=project(
+      cx + horizontalSpan*0.56,
+      cy,
+      0
+    );
+    const rulerTop=project(
+      cx + horizontalSpan*0.56,
+      cy,
+      altitudeTop
+    );
+
+    let ax=clamp(rulerGround.x,90,W-125);
+    const ay=clamp(rulerGround.y,H-82,H-42);
+    const ah=Math.max(70,ay-rulerTop.y);
+
+    ctx.strokeStyle='rgba(210,225,232,.65)';
+    ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(ax,ay-ah);ctx.stroke();
+
+    ctx.fillStyle='#d2dde5';
+    ctx.font='11px var(--mono)';
+    ctx.fillText('Altitude (m)',ax-8,Math.max(18,ay-ah-10));
+
+    for(let i=0;i<=5;i++){
+      const z=altitudeTop*i/5;
+      const q=project(cx + horizontalSpan*0.56,cy,z);
+      const yy=q.y;
+
+      ctx.strokeStyle='rgba(170,190,200,.45)';
+      ctx.beginPath();ctx.moveTo(ax-5,yy);ctx.lineTo(ax+5,yy);ctx.stroke();
+
+      ctx.fillStyle='#9aa9b8';
+      ctx.font='10px var(--mono)';
+      ctx.fillText(
+        `${Number.isInteger(z)?z:z.toFixed(1)} m`,
+        ax+8,
+        yy+3
+      );
+    }
+
+    // Project all points.
+    const projected=pts.map(p=>({...p,q:project(p.x,p.y,p.z),ground:project(p.x,p.y,0)}));
+    lastProjected3dPoints = projected;
+
+    // Vertical RF/altitude columns.
+    const columnStep=Math.max(1,Math.ceil(projected.length/160));
+    for(let i=0;i<projected.length;i+=columnStep){
+      const p=projected[i];
+      ctx.strokeStyle=color3d(metric3dValue(p));
+      ctx.globalAlpha=.32;
+      ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(p.ground.x,p.ground.y);ctx.lineTo(p.q.x,p.q.y);ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+
+    // Flight track.
+    for(let i=1;i<projected.length;i++){
+      const a=projected[i-1].q, b=projected[i].q;
+      ctx.strokeStyle=color3d(metric3dValue(projected[i]));
+      ctx.lineWidth=clamp(b.scale*7,2,6);
+      ctx.lineCap='round';
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    }
+
+    // RF points.
+    const pointStep=Math.max(1,Math.ceil(projected.length/240));
+    for(let i=0;i<projected.length;i+=pointStep){
+      const p=projected[i];
+      ctx.fillStyle=color3d(metric3dValue(p));
+      ctx.beginPath();ctx.arc(p.q.x,p.q.y,(i===projected.length-1)?6:clamp(p.q.scale*4.2,1.4,4.5),0,Math.PI*2);ctx.fill();
+    }
+
+    // Current aircraft.
+    const last=projected[projected.length-1];
+    const q=last.q, ground=last.ground;
+
+    ctx.strokeStyle='rgba(255,255,255,.55)';
+    ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(q.x,q.y);ctx.lineTo(ground.x,ground.y);ctx.stroke();
+
+    ctx.save();
+    ctx.translate(q.x,q.y);
+    ctx.rotate((Number(state.heading)||0)*Math.PI/180*-1 + az);
+    const ms=clamp(q.scale*22,10,34);
+    ctx.strokeStyle='#ffffff';
+    ctx.fillStyle='#ffffff';
+    ctx.lineWidth=1.6;
+    ctx.shadowColor='rgba(255,255,255,.7)';
+    ctx.shadowBlur=10;
+    ctx.beginPath();
+    ctx.moveTo(-ms*0.5,-ms*0.5); ctx.lineTo(ms*0.5,ms*0.5);
+    ctx.moveTo(ms*0.5,-ms*0.5); ctx.lineTo(-ms*0.5,ms*0.5);
+    ctx.stroke();
+    [[-ms*0.5,-ms*0.5],[ms*0.5,-ms*0.5],[-ms*0.5,ms*0.5],[ms*0.5,ms*0.5]].forEach(([px,py])=>{
+      ctx.beginPath(); ctx.arc(px,py,ms*0.16,0,Math.PI*2); ctx.fill();
+    });
+    ctx.shadowBlur=0;
+    ctx.beginPath(); ctx.arc(0,0,ms*0.14,0,Math.PI*2); ctx.fillStyle='#22C55E'; ctx.fill();
+    ctx.restore();
+
+    // Current detail box.
+    const metricValue=metric3dValue(last);
+    const metricLabel=view3dMetricCfg[view3dMetric].label.split(' ')[0];
+    const boxX=Math.min(W-170,q.x+14), boxY=Math.max(28,q.y-28);
+    ctx.fillStyle='rgba(3,9,15,.92)';
+    ctx.fillRect(boxX,boxY,1,1);
+    ctx.fillStyle='#f1f5f9';ctx.font='11px var(--mono)';
+    ctx.fillText(`AGL ${Number(last.z).toFixed(1)} m`,boxX+9,boxY+17);
+    ctx.fillStyle=color3d(metricValue);
+    ctx.fillText(`${metricLabel} ${Number.isFinite(metricValue)?metricValue.toFixed(1):'--'}`,boxX+9,boxY+34);
+
+    // Live track statistics.
+    ctx.fillStyle='#7f93a5';ctx.font='10px var(--mono)';
+    let horizontalDistance=0;
+    for(let i=1;i<pts.length;i++){
+      horizontalDistance += Math.hypot(
+        Number(pts[i].x)-Number(pts[i-1].x),
+        Number(pts[i].y)-Number(pts[i-1].y)
+      );
+    }
+    ctx.fillText(
+      `Points ${pts.length}   Track ${horizontalDistance.toFixed(0)} m   Max AGL ${maxZ.toFixed(1)} m`,
+      12,H-62
+    );
+  }
+
+
+  document.getElementById('view3dMetric').addEventListener('change',e=>{view3dMetric=e.target.value;update3dLegend();draw3d();});
+  document.getElementById('view3dReset').addEventListener('click',()=>{rotAngle=.6;tiltAngle=.64;zoomScale=1;view3dPaused=false;});
+  document.getElementById('view3dAlignVertical').addEventListener('click',()=>{
+    // True vertical/altitude measurement mode: 0° tilt makes the ground grid
+    // horizontal and Z/altitude project strictly vertically. Keep yaw and zoom.
+    tiltAngle=0;
+    draw3d();
+  });
+  document.getElementById('view3dRotate').addEventListener('click',()=>setAutoRotate(!autoRotate));
+  document.getElementById('view3dPause').addEventListener('click',e=>{view3dPaused=!view3dPaused;e.currentTarget.textContent=view3dPaused?'▶':'Ⅱ';});
+  document.getElementById('view3dFullscreen').addEventListener('click',()=>{const el=document.querySelector('.view3d-card'); if(!document.fullscreenElement) el.requestFullscreen?.(); else document.exitFullscreen?.();});
+  // Initial 2D legend already contains the default RSRP values.
+  // Do not call updateMetricLegends here because mapMetric is declared later.
+  update3dLegend();
+
+  /* ---------------- SVG line chart helper: fixed scales + axes ---------------- */
+  function drawLineChart(svgId, seriesList, yMin, yMax, timeStamps=null, timeRangeMinutes=null){
+    const svg=document.getElementById(svgId); if(!svg) return;
+    svg.innerHTML='';
+    const W=620,H=220,padL=46,padR=10,padT=12,padB=28;
+    const ns='http://www.w3.org/2000/svg';
+    const finiteSeries=seriesList.filter(s=>s.data.some(Number.isFinite));
+    const lo=Number.isFinite(yMin)?yMin:(finiteSeries.length?Math.min(...finiteSeries.flatMap(s=>s.data)):0);
+    const hi=Number.isFinite(yMax)?yMax:(finiteSeries.length?Math.max(...finiteSeries.flatMap(s=>s.data)):1);
+    const range=(hi-lo)||1;
+    const x0=padL, x1=W-padR, y0=padT, y1=H-padB;
+    const el=(tag,attrs,text='')=>{const e=document.createElementNS(ns,tag); for(const [k,v] of Object.entries(attrs))e.setAttribute(k,v); if(text)e.textContent=text; svg.appendChild(e); return e;};
+
+    // Y grid + labels
+    for(let i=0;i<=5;i++){
+      const frac=i/5, y=y0+(y1-y0)*frac, val=hi-(hi-lo)*frac;
+      el('line',{x1:x0,x2:x1,y1:y,y2:y,stroke:'#1E293B','stroke-width':1});
+      el('text',{x:x0-7,y:y+3,'font-size':9,fill:'#718096','text-anchor':'end'},fmtAxis(val));
+    }
+
+    // X-axis = exactly the selected time frame, TradingView-style.
+    // The right edge follows the newest actual RF sample timestamp.
+    const minutes = Number.isFinite(Number(timeRangeMinutes))
+      ? Number(timeRangeMinutes) : 10;
+
+    const validTimes = (timeStamps || [])
+      .map(Number).filter(Number.isFinite);
+
+    const axisEnd = validTimes.length ? Math.max(...validTimes) : Date.now();
+    const axisStart = axisEnd - minutes*60*1000;
+    const axisSpan = Math.max(1, axisEnd-axisStart);
+
+    // Choose a clean, timeframe-dependent grid interval so the labels
+    // always represent the selected window rather than a fixed 10-minute scale.
+    const tickMinutes = minutes <= 1 ? 0.25 :
+                        minutes <= 5 ? 1 :
+                        minutes <= 10 ? 2 :
+                        minutes <= 15 ? 3 :
+                        minutes <= 30 ? 5 : 10;
+    const tickMs = tickMinutes * 60 * 1000;
+
+    // Always include both ends and keep the grid aligned to the selected range.
+    const tickTimes = [axisStart];
+    for(let t=axisStart+tickMs; t<axisEnd-1; t+=tickMs) tickTimes.push(t);
+    if(tickTimes[tickTimes.length-1] !== axisEnd) tickTimes.push(axisEnd);
+
+    tickTimes.forEach(t=>{
+      const frac=clamp((t-axisStart)/axisSpan,0,1);
+      const x=x0+(x1-x0)*frac;
+
+      el('line',{
+        x1:x,x2:x,y1:y0,y2:y1,
+        stroke:'#162131','stroke-width':1
+      });
+
+      const d=new Date(t);
+      const showSeconds = minutes <= 1;
+      const label=d.toLocaleTimeString('en-IN',{
+        hour:'2-digit',minute:'2-digit',
+        ...(showSeconds ? {second:'2-digit'} : {}),
+        hour12:false
+      });
+
+      el('text',{
+        x:x,y:y1+16,'font-size':8,
+        fill:'#546077','text-anchor':'middle'
+      },label);
+    });
+
+    el('line',{x1:x0,x2:x0,y1:y0,y2:y1,stroke:'#334155'});
+    el('line',{x1:x0,x2:x1,y1:y1,y2:y1,stroke:'#334155'});
+
+    // Plot samples using their actual publisher timestamps.
+    finiteSeries.forEach(s=>{
+      if(s.data.length<2)return;
+
+      const times=s.times || timeStamps || [];
+      const useTimeAxis=times.length===s.data.length;
+
+      const pts=s.data.map((v,i)=>{
+        const ts=Number(times[i]);
+        const x=useTimeAxis && Number.isFinite(ts)
+          ? x0+(x1-x0)*clamp((ts-axisStart)/axisSpan,0,1)
+          : x0+(x1-x0)*(i/(s.data.length-1));
+
+        const y=y0+(y1-y0)*(1-clamp((v-lo)/range,0,1));
+        return `${x},${y}`;
+      }).join(' ');
+
+      el('polyline',{
+        points:pts,fill:'none',stroke:s.color,'stroke-width':2,
+        'stroke-linejoin':'round','stroke-linecap':'round'
+      });
+
+      const last=s.data[s.data.length-1];
+      if(Number.isFinite(last)){
+        const lastTs=Number(times[times.length-1]);
+        const x=Number.isFinite(lastTs)
+          ? x0+(x1-x0)*clamp((lastTs-axisStart)/axisSpan,0,1) : x1;
+        const y=y0+(y1-y0)*(1-clamp((last-lo)/range,0,1));
+        el('circle',{cx:x,cy:y,r:3,fill:s.color});
+      }
+    });
+
+    function fmtAxis(v){
+      return Math.abs(v)>=100?Math.round(v):
+             Math.abs(v)>=10?v.toFixed(0):
+             v.toFixed(1);
+    }
+  }
+  function drawScatter(){
+    const svg=document.getElementById('scatterChart'); if(!svg)return;
+    svg.innerHTML=''; const W=340,H=280,padL=52,padR=14,padT=14,padB=34,ns='http://www.w3.org/2000/svg';
+    const cfg=metricThresholdCfg[scatterMetric] || metricThresholdCfg.rsrp;
+    const vals=scatterBuf.map(p=>Number(p[scatterMetric])).filter(Number.isFinite);
+    const altMax=Math.max(100,Math.ceil((Math.max(0,...scatterBuf.map(p=>Number(p.alt)||0),0)+20)/50)*50);
+    let yMin=cfg.min, yMax=cfg.max;
+    const el=(tag,a,t='')=>{const e=document.createElementNS(ns,tag);Object.entries(a).forEach(([k,v])=>e.setAttribute(k,v));if(t)e.textContent=t;svg.appendChild(e);};
+    for(let i=0;i<=5;i++){const f=i/5,y=padT+(H-padT-padB)*f,v=yMax-(yMax-yMin)*f;el('line',{x1:padL,x2:W-padR,y1:y,y2:y,stroke:'#1E293B'});el('text',{x:padL-6,y:y+3,'font-size':8,fill:'#718096','text-anchor':'end'},Number.isInteger(v)?String(Math.round(v)):v.toFixed(1));}
+    for(let i=0;i<=4;i++){const f=i/4,x=padL+(W-padL-padR)*f,v=Math.round(altMax*f);el('line',{x1:x,x2:x,y1:padT,y2:H-padB,stroke:'#162131'});el('text',{x,y:H-8,'font-size':8,fill:'#546077','text-anchor':'middle'},v+'m');}
+    el('line',{x1:padL,x2:padL,y1:padT,y2:H-padB,stroke:'#334155'});el('line',{x1:padL,x2:W-padR,y1:H-padB,y2:H-padB,stroke:'#334155'});
+    scatterBuf.forEach(pt=>{const v=Number(pt[scatterMetric]); if(!Number.isFinite(v)) return; const x=padL+(W-padL-padR)*clamp(Number(pt.alt)/altMax,0,1),y=padT+(H-padT-padB)*(1-clamp((v-yMin)/(yMax-yMin),0,1));el('circle',{cx:x,cy:y,r:2.5,fill:colorForScatterMetric(v),opacity:.9});});
+    el('text',{x:W/2,y:H-1,'font-size':8,fill:'#718096','text-anchor':'middle'},'Altitude AGL (m)');
+    el('text',{x:9,y:H/2,'font-size':8,fill:'#718096','text-anchor':'middle',transform:`rotate(-90 9 ${H/2})`},cfg.label);
+  }
+
+  /* ---------------- events / alerts ---------------- */
+  const events = [];
+  const handovers = [];
+  const eventCooldown = new Map();
+  let activeAlertCount = 0;
+  const qualityAlertState = {
+    rsrp:false, rsrq:false, sinr:false, rssi:false, mqttLatency:false,
+    pci:null, fcArmed:null
+  };
+  function eventClock(ts){
+    const d = ts instanceof Date ? ts : new Date(ts || Date.now());
+    return new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d);
+  }
+  function addEvent(type, title, detail, sourceTs=null, dedupeKey=null){
+    const key=dedupeKey || `${type}|${title}|${detail}`;
+    const now=Date.now();
+    const last=eventCooldown.get(key)||0;
+    if(now-last<10000) return;
+    eventCooldown.set(key,now);
+    events.unshift({type,title,detail,time:sourceTs ? new Date(sourceTs) : new Date()});
+    if(events.length>500) events.pop();
+    activeAlertCount=events.filter(e=>e.type==='warn'||e.type==='err').length;
+    const badge=document.getElementById('alertBadgeCount'); if(badge) badge.textContent=String(activeAlertCount);
+    renderEvents();
+  }
+  function renderEvents(){
+    const list = document.getElementById('eventsList');
+    list.innerHTML = events.map(e=>{
+      const ts=eventClock(e.time);
+      const iconPaths = {ok:'<path d="M20 6L9 17l-5-5"/>',warn:'<path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>',info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',err:'<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>'};
+      const colorVar = {ok:'var(--green)',warn:'var(--orange)',info:'var(--blue)',err:'var(--red)'}[e.type];
+      return `<div class="event-row ${e.type}"><div class="event-icon" style="color:${colorVar}">${iconSvg(iconPaths[e.type])}</div><div class="event-body"><div class="etime">${ts} IST</div><div class="et">${e.title}</div><div class="ed">${e.detail}</div></div></div>`;
+    }).join('');
+  }
+
+  function evaluateQualityAlerts(){
+    const checks = [
+      {key:'rsrp', label:'RSRP', value:state.rsrp, metric:'rsrp', unit:'dBm'},
+      {key:'rsrq', label:'RSRQ', value:state.rsrq, metric:'rsrq', unit:'dB'},
+      {key:'sinr', label:'SINR', value:state.sinr, metric:'sinr', unit:'dB'},
+      {key:'rssi', label:'RSSI', value:state.rssi, metric:'rssi', unit:'dBm'}
+    ];
+
+    checks.forEach(c=>{
+      const band = Number.isFinite(c.value) ? metricBand(c.metric,c.value) : -1;
+      const poor = band >= 3;
+
+      if(poor && !qualityAlertState[c.key]){
+        const valueText = c.value.toFixed(c.metric === 'sinr' ? 1 : 0);
+        addEvent(
+          'warn',
+          `${c.label} Poor`,
+          `${c.label} ${valueText} ${c.unit} — signal quality is Poor/Bad`,
+          new Date(),
+          `quality|${c.key}|poor`
+        );
+      }
+      qualityAlertState[c.key] = poor;
+    });
+
+    const latency = Number(state.telemetryAgeMs);
+    const highLatency = Number.isFinite(latency) && latency > 2000;
+
+    if(highLatency && !qualityAlertState.mqttLatency){
+      addEvent(
+        'warn',
+        'MQTT Latency High',
+        `MQTT timestamp age ${latency} ms (> 2000 ms)`,
+        new Date(),
+        'mqtt|latency|high'
+      );
+    }
+    qualityAlertState.mqttLatency = highLatency;
+
+    // PCI change notification
+    const currentPci = Number.isFinite(state.pci) ? Math.round(state.pci) : null;
+    if(currentPci !== null){
+      if(qualityAlertState.pci !== null && currentPci !== qualityAlertState.pci){
+        addEvent(
+          'info',
+          'PCI Changed',
+          `PCI changed from ${qualityAlertState.pci} to ${currentPci}`,
+          new Date(),
+          `pci|${qualityAlertState.pci}|${currentPci}`
+        );
+      }
+      qualityAlertState.pci = currentPci;
+    }
+
+    // FC Armed / Disarmed notification
+    if(state.fcArmed !== null){
+      if(qualityAlertState.fcArmed !== null &&
+         state.fcArmed !== qualityAlertState.fcArmed){
+        addEvent(
+          state.fcArmed ? 'info' : 'warn',
+          state.fcArmed ? 'FC Armed' : 'FC Disarmed',
+          state.fcArmed ? 'Flight controller armed' : 'Flight controller disarmed',
+          new Date(),
+          state.fcArmed ? 'fc|armed' : 'fc|disarmed'
+        );
+      }
+      qualityAlertState.fcArmed = state.fcArmed;
+    }
+  }
+
+  function addHandover(cellId, band, pci, rsrp){
+    handovers.unshift({cellId,band,pci,rsrp,time:new Date()});
+    if(handovers.length>10) handovers.pop();
+    renderHandovers();
+  }
+  function renderHandovers(){
+    const list = document.getElementById('handoverList');
+    list.innerHTML = handovers.length ? handovers.map(h=>{
+      return `<div class="tl-item"><div class="tl-dot" style="background:${colorForRsrp(h.rsrp)}"></div><div><div class="tl-time">${eventClock(h.time)} IST</div><div class="tl-main">Cell ID: <b>${h.cellId}</b> &nbsp; Band: <b>${h.band}</b> &nbsp; PCI: <b>${h.pci}</b> &nbsp; RSRP: <b style="color:${colorForRsrp(h.rsrp)}">${Math.round(h.rsrp)} dBm</b></div></div></div>`;
+    }).join('') : '<div style="padding:16px;color:var(--text-faint);font-size:11px;">No handover events received. Real handover history requires handover/cell-change telemetry from the publisher.</div>';
+  }
+
+  /* ---------------- telemetry / status rows ---------------- */
+  function iconRow(name){
+    const icons = {
+      lat:'<circle cx="12" cy="10" r="3"/><path d="M12 21s7-6.5 7-11a7 7 0 10-14 0c0 4.5 7 11 7 11z"/>',
+      alt:'<path d="M12 2L2 22h20L12 2z"/>',
+      speed:'<circle cx="12" cy="12" r="9"/><path d="M12 12l4-2"/>',
+      hdg:'<path d="M12 2l3 7-3-1.5L9 9l3-7z"/><circle cx="12" cy="14" r="7"/>',
+      climb:'<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+      sat:'<circle cx="5" cy="19" r="2"/><path d="M12 15l-4 4M9.5 3.5l11 11-3 3-11-11a5 5 0 013-3z"/>',
+      batt:'<rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 11v2"/>',
+      modem:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 18h.01"/>',
+      wan:'<path d="M2 8.5a15 15 0 0120 0M5 12a10 10 0 0114 0M8.5 15.5a5 5 0 017 0"/>',
+      mqtt:'<path d="M4 17V7l8-4 8 4v10l-8 4-8-4z"/>',
+      gps:'<circle cx="12" cy="10" r="3"/><path d="M12 21s7-6.5 7-11a7 7 0 10-14 0c0 4.5 7 11 7 11z"/>',
+      rate:'<path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 5-6"/>',
+      clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
+    };
+    return iconSvg(icons[name]||icons.clock);
+  }
+
+  const telemetryRows = document.getElementById('telemetryRows');
+  const telemDefs = ['lat','lon','altMsl','altAgl','speed','heading','climb','sats','batt','mavlinkAge','fcBoot','fcArmed'];
+  const telemMeta = {
+    lat:{icon:'lat', label:'Latitude'}, lon:{icon:'lat', label:'Longitude'},
+    altMsl:{icon:'alt', label:'Altitude (MSL)'}, altAgl:{icon:'alt', label:'Altitude (AGL)'},
+    speed:{icon:'speed', label:'Speed'}, heading:{icon:'hdg', label:'Heading'},
+    climb:{icon:'climb', label:'Climb Rate'}, sats:{icon:'sat', label:'Satellites'},
+    batt:{icon:'batt', label:'Battery'},
+    mavlinkAge:{icon:'clock', label:'MAVLink Age'}, fcBoot:{icon:'clock', label:'FC Time Boot'},
+    fcArmed:{icon:'batt', label:'FC Armed'},
+  };
+  telemDefs.forEach(k=>{
+    const row=document.createElement('div'); row.className='lrow';
+    row.innerHTML = `<div class="ll">${iconRow(telemMeta[k].icon)}${telemMeta[k].label}</div><div class="lv" id="tele-${k}">--</div>`;
+    telemetryRows.appendChild(row);
+  });
+
+  const sysDefs = [
+    {id:'modem', icon:'modem', label:'Modem', val:'--'},
+    {id:'wan', icon:'wan', label:'WAN', val:'--'},
+    {id:'mqtt', icon:'mqtt', label:'MQTT', val:'Disconnected'},
+    {id:'gps', icon:'gps', label:'GPS', val:'--'},
+    {id:'rate', icon:'rate', label:'Data Rate', val:'0 msg/s'},
+    {id:'age', icon:'clock', label:'Data Age', val:'--'},
+    {id:'uptime', icon:'clock', label:'Uptime', val:'00:00:00'},
+  ];
+  const sysRows = document.getElementById('systemStatusRows');
+  sysDefs.forEach(s=>{
+    const row=document.createElement('div'); row.className='lrow';
+    const color = (s.val==='Connected'||s.val==='3D Fix') ? 'var(--green)' : 'var(--text)';
+    row.innerHTML = `<div class="ll">${iconRow(s.icon)}${s.label}</div><div class="lv" id="sys-${s.id}" style="color:${color}">${s.val}</div>`;
+    sysRows.appendChild(row);
+  });
+
+  /* ---------------- neighbor cells (persistent, sortable, searchable, click-to-handover) ---------------- */
+  let neighborData = [];
+  let currentPci = null, currentEarfcn = null, currentBand = null;
+  let neighborSort = {key:'rsrp', dir:1};
+  let neighborSearch = '';
+
+  function sortIndicator(key){
+    if(neighborSort.key!==key) return '';
+    return neighborSort.dir===1 ? ' \u25B2' : ' \u25BC';
+  }
+
+  function renderNeighbors(){
+    let rows = neighborData.slice();
+    if(neighborSearch){
+      const q = neighborSearch.toLowerCase();
+      rows = rows.filter(r => String(r.pci).includes(q) || String(r.band).includes(q) || String(r.earfcn).includes(q));
+    }
+    rows.sort((a,b)=> (a[neighborSort.key]-b[neighborSort.key]) * neighborSort.dir);
+    document.getElementById('neighborBody').innerHTML = rows.length ? rows.map(r=>
+      `<tr data-pci="${r.pci}" title="Click to inspect neighbor cell">
+        <td>${r.pci}</td><td>${r.earfcn}</td><td>${r.band}</td>
+        <td style="color:${colorForRsrp(r.rsrp)}">${Math.round(r.rsrp)}</td>
+        <td>${Math.round(r.rsrq)}</td><td>${r.sinr.toFixed(1)}</td>
+      </tr>`
+    ).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--text-faint); padding:16px;">No live neighbor-cell MQTT data</td></tr>`;
+    document.querySelectorAll('#neighborHead th[data-key]').forEach(th=>{
+      th.textContent = th.dataset.label + sortIndicator(th.dataset.key);
+    });
+  }
+
+  function forceHandover(nb){
+    if(!nb) return;
+    addEvent('info','Neighbor Selected',`PCI ${nb.pci} selected. No handover command is sent from this dashboard.`,new Date(),'neighbor|'+nb.pci);
+  }
+
+  document.getElementById('neighborBody').addEventListener('click', function(e){
+    const tr = e.target.closest('tr');
+    if(!tr || !tr.dataset.pci) return;
+    const pci = parseInt(tr.dataset.pci,10);
+    const nb = neighborData.find(n=>n.pci===pci);
+    if(nb) forceHandover(nb);
+  });
+
+  document.getElementById('neighborSearch').addEventListener('input', function(e){
+    neighborSearch = e.target.value.trim();
+    renderNeighbors();
+  });
+
+  document.querySelectorAll('#neighborHead th[data-key]').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.dataset.key;
+      if(neighborSort.key===key) neighborSort.dir *= -1;
+      else { neighborSort.key = key; neighborSort.dir = 1; }
+      renderNeighbors();
+    });
+  });
+
+  /* ---------------- clocks ---------------- */
+  const sessionStartMs=Date.now();
+  const IST_TZ='Asia/Kolkata';
+  const istClockFmt=new Intl.DateTimeFormat('en-IN',{timeZone:IST_TZ,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+  const istDateFmt=new Intl.DateTimeFormat('en-IN',{timeZone:IST_TZ,year:'numeric',month:'2-digit',day:'2-digit'});
+  function updateClocks(){
+    const now=new Date();
+    document.getElementById('topClock').textContent=istClockFmt.format(now)+' IST';
+    const parts=istDateFmt.formatToParts(now);
+    const y=parts.find(p=>p.type==='year')?.value, mo=parts.find(p=>p.type==='month')?.value, da=parts.find(p=>p.type==='day')?.value;
+    document.getElementById('topDate').textContent=`${y}-${mo}-${da}`;
+    const elapsed=Math.max(0,Date.now()-sessionStartMs);
+    const total=Math.floor(elapsed/1000), h=Math.floor(total/3600), m=Math.floor((total%3600)/60), sec=total%60;
+    const mt=pad(h)+':'+pad(m)+':'+pad(sec);
+    document.getElementById('missionTimer').textContent=mt;
+    document.getElementById('sys-uptime').textContent=mt;
+  }
+
+  /* ---------------- LIVE MQTT DATA PIPELINE ---------------- */
+  function num(v){
+    if(v===null || v===undefined || v==='') return null;
+    if(typeof v==='number') return Number.isFinite(v)?v:null;
+    const m=String(v).trim().match(/[+-]?(?:\d+(?:\.\d*)?|\.\d+)/);
+    if(!m) return null;
+    const n=Number(m[0]);
+    return Number.isFinite(n)?n:null;
+  }
+  function str(v, fallback='--'){ return v===null || v===undefined || v==='' ? fallback : String(v); }
+  function topicLeaf(topic){ return topic.split('/').pop(); }
+  function markMqttActivity(){
+    liveMessageCount++;
+    const nowSec=Math.floor(Date.now()/1000);
+    if(nowSec!==liveSecond){ liveMsgRate=liveMessageCount; liveMessageCount=0; liveSecond=nowSec; }
+    document.getElementById('sys-rate').textContent = liveMsgRate+' msg/s';
+  }
+  function setMqttUi(connected, text){
+    const dot=document.getElementById('dotMqtt'), st=document.getElementById('stMqtt');
+    dot.style.background=connected?'var(--green)':'var(--red)';
+    st.textContent=text;
+    document.body.classList.toggle('live-off', !connected);
+    document.getElementById('liveDot').style.background=connected?'var(--green)':'var(--red)';
+    document.getElementById('liveDot').title=text;
+    const liveText=document.getElementById('liveText'); if(liveText) liveText.textContent=connected?'LIVE':text.toUpperCase();
+    const detailStatus=document.getElementById('detailMqttStatus');
+    if(detailStatus){ detailStatus.textContent=text; detailStatus.style.color=connected?'var(--green)':'var(--red)'; }
+    const sysMqtt=document.getElementById('sys-mqtt'); if(sysMqtt) sysMqtt.textContent=connected?'LIVE':text.toUpperCase();
+  }
+  function setJetsonUi(status){
+    // status: 'connected' | 'stale' | 'unknown'
+    const dot=document.getElementById('dotJetson'), st=document.getElementById('stJetson');
+    if(!dot||!st) return;
+    if(status==='connected'){
+      dot.style.background='var(--green)'; dot.style.boxShadow='0 0 5px var(--green)';
+      st.textContent='Connected'; st.style.color='var(--green)';
+    } else if(status==='stale'){
+      dot.style.background='var(--orange)'; dot.style.boxShadow='0 0 5px var(--orange)';
+      st.textContent='No data'; st.style.color='var(--orange)';
+    } else {
+      dot.style.background='var(--red)'; dot.style.boxShadow='0 0 5px var(--red)';
+      st.textContent='Not connected'; st.style.color='var(--red)';
+    }
+  }
+  let mapMetric='rsrp';
+  let scatterMetric='rsrp';
+  function metricValue(){
+    return mapMetric==='rsrq'?state.rsrq:mapMetric==='sinr'?state.sinr:mapMetric==='rssi'?state.rssi:state.rsrp;
+  }
+  function colorForMetric(v){
+    const band=metricBand(mapMetric,v);
+    return band<0?'#64748B':METRIC_COLORS[band];
+  }
+  function colorForScatterMetric(v){
+    const band=metricBand(scatterMetric,v);
+    return band<0?'#64748B':METRIC_COLORS[band];
+  }
+  function mapMetricLabel(){ return metricThresholdCfg[mapMetric].label; }
+  document.getElementById('mapMetric').addEventListener('change',e=>{
+    mapMetric=e.target.value;
+    updateMetricLegends();
+    update3dLegend();
+    rebuildMapColors();
+    drawScatter();
+    draw3d();
+  });
+  document.querySelectorAll('#scatterMetricButtons .scatter-metric-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      scatterMetric=btn.dataset.scatterMetric || 'rsrp';
+      document.querySelectorAll('#scatterMetricButtons .scatter-metric-btn').forEach(b=>b.classList.toggle('active',b===btn));
+      drawScatter();
+    });
+  });
+  function rebuildMapColors(){
+    pathLayer.eachLayer(layer=>{
+      if(layer instanceof L.CircleMarker){ const v=Number(layer.options.metricValue); const c=colorForMetric(v); layer.setStyle({color:c,fillColor:c}); }
+      else if(layer instanceof L.Polyline && layer.options.metricValue!==undefined){ layer.setStyle({color:colorForMetric(Number(layer.options.metricValue))}); }
+    });
+  }
+
+  function addLivePoint(){
+    if(!Number.isFinite(state.lat) || !Number.isFinite(state.lon) || !Number.isFinite(state.altAgl) || !Number.isFinite(state.rsrp)) return;
+    const p={lat:state.lat,lon:state.lon,alt:state.altAgl,rsrp:state.rsrp,rsrq:state.rsrq,sinr:state.sinr,rssi:state.rssi,time:(lastTelemetryTs||lastSignalTs)?new Date(lastTelemetryTs||lastSignalTs):new Date()};
+    const pointKey=`${p.lat.toFixed(6)}|${p.lon.toFixed(6)}|${p.alt.toFixed(1)}|${p.rsrp.toFixed(1)}`;
+    if(pointKey===lastPointKey) return;
+    lastPointKey=pointKey;
+    scatterBuf.push({alt:p.alt,rsrp:p.rsrp,rsrq:p.rsrq,sinr:p.sinr,rssi:p.rssi}); if(scatterBuf.length>150) scatterBuf.shift();
+    // local ENU-like coordinates in metres for the 3D canvas
+    const x=(p.lon-BASE_LON)*111320*Math.cos(BASE_LAT*Math.PI/180);
+    const y=(p.lat-BASE_LAT)*110540;
+    live3dBuf.push({x,y,z:p.alt,pci:state.pci,rsrp:p.rsrp,rsrq:p.rsrq,sinr:p.sinr,rssi:p.rssi,lat:p.lat,lon:p.lon,time:p.time}); if(live3dBuf.length>7200) live3dBuf.shift();
+    spiralPts=live3dBuf;
+    const metric=mapMetric==='rsrq'?p.rsrq:mapMetric==='sinr'?p.sinr:mapMetric==='rssi'?p.rssi:p.rsrp;
+    const c=colorForMetric(metric);
+    const dot=L.circleMarker([p.lat,p.lon],{radius:4,color:c,fillColor:c,fillOpacity:.92,weight:0,metricValue:metric}).addTo(pathLayer);
+    const ts=p.time.toLocaleTimeString();
+    dot.bindPopup(`<div style="font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;min-width:170px;"><b>${ts}</b><br>RSRP <b style="color:${c}">${p.rsrp.toFixed(0)} dBm</b><br>RSRQ ${Number.isFinite(state.rsrq)?state.rsrq.toFixed(0):'--'} dB<br>SINR ${Number.isFinite(state.sinr)?state.sinr.toFixed(1):'--'} dB<br>AGL ${p.alt.toFixed(1)} m<br>MSL ${Number.isFinite(state.altMsl)?state.altMsl.toFixed(1):'--'} m</div>`);
+    if(lastPt) L.polyline([lastPt,[p.lat,p.lon]],{color:c,weight:3,opacity:.85,metricValue:metric}).addTo(pathLayer);
+    lastPt=[p.lat,p.lon];
+    if(pathLayer.getLayers().length>7200){ pathLayer.removeLayer(pathLayer.getLayers()[0]); }
+  }
+  function updateSignal(d){
+    lastSignal=d; lastSignalTs=d.timestamp||new Date().toISOString();
+    const rsrp=num(d.lte_rsrp_dbm ?? d.rsrp_dbm ?? d.rsrp);
+    const rsrq=num(d.lte_rsrq_db ?? d.rsrq_db ?? d.rsrq);
+    const sinr=num(d.lte_snr_db ?? d.sinr_db ?? d.sinr);
+    const rssi=num(d.lte_rssi_dbm ?? d.rssi_dbm ?? d.rssi);
+    if(rsrp!==null) state.rsrp=rsrp;
+    if(rsrq!==null) state.rsrq=rsrq;
+    if(sinr!==null) state.sinr=sinr;
+    if(rssi!==null) state.rssi=rssi;
+    const signalTs=Date.parse(d.timestamp||'');
+    if(Number.isFinite(signalTs)){
+      state.telemetryAgeMs=Math.max(0,Date.now()-signalTs);
+      const ageEl=document.getElementById('sys-age'); if(ageEl) ageEl.textContent=state.telemetryAgeMs+' ms';
+      updateKpi('latency',state.telemetryAgeMs,0,'Current MQTT timestamp age');
+    }
+    evaluateQualityAlerts();
+    const cell=num(d.cell_id); if(cell!==null) document.getElementById('cellId').textContent=Math.round(cell);
+    const pci=num(d.pci); if(pci!==null){state.pci=pci;document.getElementById('pci').textContent=Math.round(pci);}
+    const tac=num(d.tac); if(tac!==null) document.getElementById('tac').textContent=Math.round(tac);
+    const mcc=str(d.mcc), mnc=str(d.mnc); if(mcc!=='--'||mnc!=='--') document.getElementById('mccMnc').textContent=`${mcc} / ${mnc}`;
+    if(d.rat) document.getElementById('ratChip').textContent=String(d.rat).toUpperCase();
+    const band = str(d.band,'--'); const earfcn = str(d.earfcn,'--');
+    document.getElementById('bandEarfcn').textContent = `${band} / ${earfcn}`;
+    if(d.bandwidth_mhz!==undefined || d.bandwidth!==undefined){
+      const bw=str(d.bandwidth_mhz ?? d.bandwidth,'--');
+      document.getElementById('bw').textContent = /mhz/i.test(bw)?bw:bw+' MHz';
+    }
+    const rfTs = Number.isFinite(signalTs) ? signalTs : Date.now();
+    pushBuf(rfBuf,'rsrp',state.rsrp,rfTs); pushBuf(rfBuf,'rsrq',state.rsrq,rfTs); pushBuf(rfBuf,'sinr',state.sinr,rfTs); pushBuf(rfBuf,'rssi',state.rssi,rfTs);
+    updateKpi('rsrp',state.rsrp,0); document.querySelector('#kv-rsrp span').textContent='dBm';
+    updateKpi('rsrq',state.rsrq,0); document.querySelector('#kv-rsrq span').textContent='dB';
+    updateKpi('sinr',state.sinr,1); document.querySelector('#kv-sinr span').textContent='dB';
+    document.getElementById('scRsrp').textContent=Number.isFinite(state.rsrp)?state.rsrp.toFixed(0)+' dBm':'--'; document.getElementById('scRsrp').style.color=Number.isFinite(state.rsrp)?colorForRsrp(state.rsrp):'var(--text)';
+    document.getElementById('scRsrq').textContent=Number.isFinite(state.rsrq)?state.rsrq.toFixed(0)+' dB':'--'; document.getElementById('scSinr').textContent=Number.isFinite(state.sinr)?state.sinr.toFixed(1)+' dB':'--'; document.getElementById('scRssi').textContent=Number.isFinite(state.rssi)?state.rssi.toFixed(0)+' dBm':'--';
+    if(state.lat!==null) addLivePoint();
+    renderNeighbors(); drawCharts(); drawScatter();
+  }
+  function updateTelemetry(d){
+    const lat=num(d.gps_lat ?? d.lat), lon=num(d.gps_lon ?? d.lon);
+    if(lat!==null && lon!==null){
+      if(!Number.isFinite(state.lat)) { BASE_LAT=lat; BASE_LON=lon; map.setView([lat,lon],Math.max(map.getZoom(),16)); }
+      state.lat=lat; state.lon=lon;
+      if(autoFollowMap) map.setView([lat,lon], Math.max(map.getZoom(),16), {animate:false});
+    }
+    const agl=num(d.relative_altitude_m ?? d.altitude_agl_m ?? d.alt_agl_m); const msl=num(d.altitude_msl_m ?? d.altitude_msl ?? d.altitude_m);
+    if(agl!==null) state.altAgl=agl; if(msl!==null) state.altMsl=msl; else if(agl!==null) state.altMsl=agl;
+    const speed=num(d.ground_speed_mps ?? d.speed_mps); if(speed!==null) state.speed=speed;
+    const heading=num(d.heading_deg ?? d.heading); if(heading!==null) state.heading=heading;
+    const sats=num(d.satellites_visible ?? d.sats); if(sats!==null) state.sats=Math.round(sats);
+    if(d.gps_fix_type!==undefined) state.gpsFix=d.gps_fix_type;
+
+    const mavAge=num(d.mavlink_age_ms); if(mavAge!==null) state.mavlinkAgeMs=mavAge;
+    const fcBoot=num(d.fc_time_boot_ms); if(fcBoot!==null) state.fcTimeBootMs=fcBoot;
+    if(d.fc_armed!==undefined && d.fc_armed!==null){
+      const av=d.fc_armed;
+      state.fcArmed = typeof av==='boolean' ? av :
+        (String(av).toLowerCase()==='true' || String(av)==='1' || String(av).toLowerCase()==='armed');
+    }
+    if(d.timestamp){
+      lastTelemetryTs=d.timestamp;
+      const ts=Date.parse(d.timestamp);
+      if(Number.isFinite(ts)){
+        state.telemetryAgeMs=Math.max(0,Date.now()-ts);
+        const ageEl=document.getElementById('sys-age'); if(ageEl) ageEl.textContent=state.telemetryAgeMs+' ms';
+      }
+    }
+    if(Number.isFinite(state.telemetryAgeMs)){ state.latency=state.telemetryAgeMs; pushBuf(tpBuf,'lat',state.latency,Date.now()); updateKpi('latency',state.latency,0,'Current MQTT timestamp age'); } if(Number.isFinite(state.dl)) pushBuf(tpBuf,'dl',state.dl,Date.now()); if(Number.isFinite(state.ul)) pushBuf(tpBuf,'ul',state.ul,Date.now());
+    updateKpi('altAgl',state.altAgl,1);
+    updateKpi('speed',state.speed,1);
+    document.querySelector('#sub-altAgl').textContent=
+      Number.isFinite(state.altMsl) ? 'MSL: '+state.altMsl.toFixed(1)+' m' : 'MSL: --';
+    document.querySelector('#sub-speed').textContent=
+      Number.isFinite(state.speed) ? (state.speed*3.6).toFixed(1)+' km/h' : '-- km/h';
+    document.getElementById('tele-lat').textContent=Number.isFinite(state.lat)?state.lat.toFixed(6)+'°':'--'; document.getElementById('tele-lon').textContent=Number.isFinite(state.lon)?state.lon.toFixed(6)+'°':'--';
+    document.getElementById('tele-altMsl').textContent=Number.isFinite(state.altMsl)?state.altMsl.toFixed(1)+' m':'--'; document.getElementById('tele-altAgl').textContent=Number.isFinite(state.altAgl)?state.altAgl.toFixed(1)+' m':'--';
+    document.getElementById('tele-speed').textContent=Number.isFinite(state.speed)?state.speed.toFixed(2)+' m/s':'--'; document.getElementById('tele-heading').textContent=Number.isFinite(state.heading)?state.heading.toFixed(1)+'°':'--';
+    document.getElementById('tele-sats').textContent=Number.isFinite(state.sats)?Math.round(state.sats)+' ('+(state.gpsFix>=3?'3D Fix':'No 3D Fix')+')':'--';
+    document.getElementById('tele-mavlinkAge').textContent=Number.isFinite(state.mavlinkAgeMs)?state.mavlinkAgeMs.toFixed(1)+' ms':'--';
+    document.getElementById('tele-fcBoot').textContent=Number.isFinite(state.fcTimeBootMs)?Math.round(state.fcTimeBootMs)+' ms':'--';
+    document.getElementById('tele-fcArmed').textContent=state.fcArmed===null?'--':(state.fcArmed?'ARMED':'DISARMED');
+    document.getElementById('mapLatLon').textContent=
+      Number.isFinite(state.lat)&&Number.isFinite(state.lon)
+        ? `Lat: ${state.lat.toFixed(6)}  Lon: ${state.lon.toFixed(6)}` : 'Lat: --  Lon: --';
+    document.getElementById('mapAglMsl').textContent=
+      `AGL: ${Number.isFinite(state.altAgl)?state.altAgl.toFixed(1):'--'} m   MSL: ${Number.isFinite(state.altMsl)?state.altMsl.toFixed(1):'--'} m`;
+    document.getElementById('hdgFoot').textContent=
+      Number.isFinite(state.heading)?state.heading.toFixed(1)+'°':'--';
+    document.getElementById('spdFoot').textContent=
+      Number.isFinite(state.speed)?state.speed.toFixed(2)+' m/s':'--';
+	document.getElementById('altFoot').textContent=
+	  Number.isFinite(state.altAgl)?state.altAgl.toFixed(1)+' m':'--';
+    document.getElementById('sys-rate').textContent=liveMsgRate+' msg/s';
+    document.getElementById('sys-gps').textContent=state.gpsFix>=3?'3D Fix':'Fix '+str(state.gpsFix,'--');
+    droneMarker.setLatLng([state.lat,state.lon]);
+    const el=droneMarker.getElement(); if(el){const svg=el.querySelector('svg'); if(svg) svg.style.transform=`rotate(${state.heading}deg)`;}
+    addLivePoint(); drawCharts(); drawScatter(); updateClocks();
+  }
+  function updateNetwork(d){
+    lastNetwork=d; lastNetworkTs=d.timestamp||new Date().toISOString();
+    const reg=str(d.registration_state ?? d.registration); const ps=str(d.packet_session ?? d.packet_service);
+    document.getElementById('sys-wan').textContent=ps.toUpperCase();
+    document.getElementById('sys-modem').textContent=str(d.qmi_device,'Connected');
+    const ts=d.timestamp||null;
+    if(reg!=='--') addEvent(reg.toLowerCase()==='registered'?'ok':'warn','Network Registration',reg.toUpperCase(),ts,'registration|'+reg.toLowerCase());
+    if(ps!=='--') addEvent(ps.toLowerCase()==='connected'?'ok':'warn','Packet Session',ps.toUpperCase(),ts,'packet|'+ps.toLowerCase());
+    if(d.ipv4_address) addEvent('info','WAN IPv4',String(d.ipv4_address),ts,'ipv4|'+d.ipv4_address);
+  }
+  function onMqttMessage(topic,payload){
+    markMqttActivity();
+    let d; try{d=JSON.parse(payload.toString());}catch(e){addEvent('err','MQTT JSON Error',topic);return;}
+    const leaf=topicLeaf(topic);
+    if(leaf==='signal') updateSignal(d);
+    else if(leaf==='telemetry') updateTelemetry(d);
+    else if(leaf==='network') updateNetwork(d);
+    document.getElementById('sys-mqtt').textContent='LIVE';
+  }
+  function connectMqtt(){
+    const host=document.getElementById('mqttHost').value.trim(); const port=document.getElementById('mqttPort').value.trim()||'8884'; const user=document.getElementById('mqttUser').value.trim(); const pass=document.getElementById('mqttPass').value;
+    if(!host||!user||!pass){document.getElementById('mqttConfigStatus').textContent='Host, username and password are required.';return;}
+    if(mqttClient) try{mqttClient.end(true);}catch(e){}
+    const url=`wss://${host}:${port}/mqtt`;
+    document.getElementById('mqttConfigStatus').textContent='Connecting to '+url+' ...'; setMqttUi(false,'Connecting');
+    if(typeof mqtt==='undefined'){ setMqttUi(false,'Library error'); document.getElementById('mqttConfigStatus').textContent='MQTT JavaScript library did not load. Check internet access and reload the HTML.'; return; }
+    const clientId='drone-dashboard-'+Date.now().toString(36)+'-'+Math.random().toString(16).slice(2);
+    mqttClient=mqtt.connect(url,{protocolVersion:4,username:user,password:pass,clean:true,reconnectPeriod:3000,connectTimeout:15000,clientId:clientId,keepalive:30,resubscribe:true});
+    mqttClient.on('connect',()=>{
+      const base=document.getElementById('mqttTopic').value.trim().replace(/\/$/,'')||'drone_telemetry';
+      document.getElementById('mqttConfigStatus').textContent='MQTT connected. Subscribing to '+base+'/# ...';
+      mqttClient.subscribe(base+'/#',{qos:0},err=>{
+        if(err){setMqttUi(false,'Subscribe error');document.getElementById('mqttConfigStatus').textContent='Subscribe failed: '+err.message;}
+        else {setMqttUi(true,'LIVE');document.getElementById('mqttConfigStatus').textContent='LIVE — subscribed to '+base+'/#';document.getElementById('mqttModal').classList.remove('show');addEvent('ok','MQTT Connected','Live telemetry stream active',new Date(),'mqtt|connected');}
+      });
+    });
+    mqttClient.on('reconnect',()=>{addEvent('warn','MQTT Reconnecting','Attempting to restore HiveMQ WebSocket connection',new Date(),'mqtt|reconnect');setMqttUi(false,'Reconnecting');document.getElementById('mqttConfigStatus').textContent='Reconnecting to HiveMQ Cloud...';});
+    mqttClient.on('offline',()=>{addEvent('warn','MQTT Offline','Broker connection is offline',new Date(),'mqtt|offline');setMqttUi(false,'Offline');document.getElementById('mqttConfigStatus').textContent='Broker connection is offline.';});
+    mqttClient.on('close',()=>{if(!mqttClient || !mqttClient.connected){setMqttUi(false,'Closed');}});
+    mqttClient.on('error',err=>{const msg=err&&err.message?err.message:String(err); setMqttUi(false,'Error'); document.getElementById('mqttConfigStatus').textContent='MQTT error: '+msg+' | Verify MQTT Access Management credentials, WSS port 8884, and that the browser can reach HiveMQ Cloud.'; addEvent('err','MQTT Error',msg,new Date(),'mqtt|error|'+msg);});
+    mqttClient.on('message',onMqttMessage);
+  }
+  function openMqtt(){document.getElementById('mqttModal').classList.add('show');}
+
+  // Keep a very small local demo generator only when explicitly requested from the browser console.
+  function step(){ updateClocks(); }
+
+  /* ---------------- chart series visibility + time range ---------------- */
+  let seriesVisible = {rsrp:true, rsrq:true, sinr:true, rssi:true, dl:true, ul:true, lat:true};
+
+  function drawCharts(){
+    const rfSeries = [
+      {key:'rsrp', data:recentBuf('rsrp',rangeMinutes), color:'#22C55E', min:-120, max:-60},
+      {key:'rsrq', data:recentBuf('rsrq',rangeMinutes), color:'#EAB308', min:-20, max:-5},
+      {key:'sinr', data:recentBuf('sinr',rangeMinutes), color:'#22D3EE', min:-5, max:28},
+      {key:'rssi', data:recentBuf('rssi',rangeMinutes), color:'#A78BFA', min:-105, max:-50},
+    ].filter(s=> seriesVisible[s.key]);
+    drawLineChart('rfChart', rfSeries, undefined, undefined, recentBufTimes('rsrp', rangeMinutes), rangeMinutes);
+
+    const tpSeries = [
+      {key:'dl', data:recentTpBuf('dl',rangeMinutes), color:'#3B82F6', min:0, max:80},
+      {key:'ul', data:recentTpBuf('ul',rangeMinutes), color:'#A78BFA', min:0, max:30},
+      {key:'lat', data:recentTpBuf('lat',rangeMinutes), color:'#22C55E', min:0, max:200},
+    ].filter(s=> seriesVisible[s.key]);
+    drawLineChart('tpChart', tpSeries);
+  }
+
+  document.querySelectorAll('.chip-leg[data-key]').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      const key = chip.dataset.key;
+      seriesVisible[key] = !seriesVisible[key];
+      chip.classList.toggle('off', !seriesVisible[key]);
+      drawCharts();
+    });
+  });
+
+  document.querySelectorAll('.range-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.range-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      const m = parseInt(btn.dataset.range,10);
+      rangeMinutes = m;
+      document.getElementById('rfRangeLabel').textContent = `(Last ${m} minute${m>1?'s':''})`;
+      drawCharts();
+    });
+  });
+
+  /* ---------------- live controls ---------------- */
+  document.getElementById('playPauseBtn').style.display='none';
+  document.getElementById('speedBtn').style.display='none';
+  document.getElementById('mqttBtn').addEventListener('click', openMqtt);
+  // Bell is display-only. MQTT Details has its own dedicated button.
+  document.getElementById('settingsTopBtn')?.addEventListener('click', ()=>{
+    document.getElementById('mqttModal').classList.add('show');
+    document.getElementById('mqttSettingsTab')?.click();
+  });
+  document.getElementById('fullscreenTopBtn')?.addEventListener('click',()=>{
+    if(!document.fullscreenElement) document.documentElement.requestFullscreen?.(); else document.exitFullscreen?.();
+  });
+  document.getElementById('mqttClose').addEventListener('click', () => {document.getElementById('mqttModal').classList.remove('show');});
+  document.getElementById('mqttConnect').addEventListener('click', connectMqtt);
+  document.getElementById('mqttModal').addEventListener('click', e => {
+    if (e.target.id === 'mqttModal') {
+        e.target.classList.remove('show');
+    }
+  });
+
+  /* ---------------- runtime diagnostics ---------------- */
+  window.addEventListener('error', e=>{
+    console.error('[Drone RF Dashboard] JavaScript error:', e.error || e.message);
+    const s=document.getElementById('mqttConfigStatus');
+    if(s && e.message) s.textContent='Dashboard JS error: '+e.message;
+  });
+  window.addEventListener('unhandledrejection', e=>{
+    console.error('[Drone RF Dashboard] Promise error:', e.reason);
+  });
+
+  /* ---------------- init ---------------- */
+  updateClocks();
+  addEvent('info','Dashboard Ready','Connecting to live MQTT telemetry...');
+  setMqttUi(false,'Connecting');
+  renderNeighbors();
+  renderHandovers();
+  updateClocks();
+  setInterval(updateClocks, 250);
+  setTimeout(()=>{
+    if(typeof mqtt!=='undefined') connectMqtt();
+    else addEvent('err','MQTT Library Error','mqtt.min.js did not load. Check internet access.');
+  }, 800);
+  const JETSON_STALE_MS = 8000; // no fresh telemetry/signal/network message within this window => agent considered stale/down
+  setInterval(()=>{
+    const latest=[lastTelemetryTs,lastSignalTs,lastNetworkTs].map(x=>Date.parse(x||'')).filter(Number.isFinite).reduce((a,b)=>Math.max(a,b),0);
+    const brokerConnected = !!mqttClient?.connected;
+    if(latest){
+      const age=Math.max(0,Date.now()-latest);
+      const ageEl=document.getElementById('sys-age'); if(ageEl) ageEl.textContent=age+' ms';
+      if(age>5000 && brokerConnected) document.getElementById('sys-mqtt').textContent='CONNECTED / NO DATA';
+      setJetsonUi(!brokerConnected ? 'unknown' : (age<=JETSON_STALE_MS ? 'connected' : 'stale'));
+    } else {
+      setJetsonUi(brokerConnected ? 'stale' : 'unknown');
+    }
+  },1000);
+
+  function raf(){ draw3d(); requestAnimationFrame(raf); }
+  raf();
+
+});
+</script>
+
+
+<script>
+(function(){
+  function setupMqttPanels(){
+    const detailsTab=document.getElementById('mqttDetailsTab');
+    const settingsTab=document.getElementById('mqttSettingsTab');
+    const details=document.getElementById('mqttDetailsPanel');
+    const settings=document.getElementById('mqttSettingsPanel');
+    const title=document.getElementById('mqttModalTitle');
+    const desc=document.getElementById('mqttModalDescription');
+
+    function show(which){
+      const isSettings=which==='settings';
+      detailsTab?.classList.toggle('active',!isSettings);
+      settingsTab?.classList.toggle('active',isSettings);
+      if(details) details.style.display=isSettings?'none':'block';
+      if(settings) settings.style.display=isSettings?'block':'none';
+      if(title) title.textContent=isSettings?'MQTT SETTINGS':'MQTT DETAILS';
+      if(desc) desc.textContent=isSettings
+        ? 'Enter the MQTT broker server, WebSocket port, username and password.'
+        : 'Current MQTT broker and WebSocket connection information.';
+    }
+
+    detailsTab?.addEventListener('click',()=>show('details'));
+    settingsTab?.addEventListener('click',()=>show('settings'));
+
+    function syncDetails(){
+      const host=document.getElementById('mqttHost')?.value.trim()||'';
+      const port=document.getElementById('mqttPort')?.value.trim()||'';
+      const topic=document.getElementById('mqttTopic')?.value.trim()||'';
+      const h=document.getElementById('detailMqttHost');
+      const p=document.getElementById('detailMqttPort');
+      const t=document.getElementById('detailMqttTopic');
+      const e=document.getElementById('detailMqttEndpoint');
+      if(h) h.textContent=host;
+      if(p) p.textContent=port;
+      if(t) t.textContent=topic;
+      if(e) e.textContent=`wss://${host}:${port}/mqtt`;
+    }
+    ['mqttHost','mqttPort','mqttTopic'].forEach(id=>{
+      document.getElementById(id)?.addEventListener('input',syncDetails);
+    });
+    syncDetails();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',setupMqttPanels);
+  else setupMqttPanels();
+})();
+</script>
+
+
+<script>
+(function(){
+  function syncMqttServerPortDetails(){
+    const host=document.getElementById('mqttHost')?.value.trim();
+    const port=document.getElementById('mqttPort')?.value.trim();
+    const h=document.getElementById('detailMqttHost');
+    const p=document.getElementById('detailMqttPort');
+    if(h && host) h.textContent=host;
+    if(p && port) p.textContent=port;
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',()=>{
+      syncMqttServerPortDetails();
+      document.getElementById('mqttHost')?.addEventListener('input',syncMqttServerPortDetails);
+      document.getElementById('mqttPort')?.addEventListener('input',syncMqttServerPortDetails);
+    });
+  }else{
+    syncMqttServerPortDetails();
+    document.getElementById('mqttHost')?.addEventListener('input',syncMqttServerPortDetails);
+    document.getElementById('mqttPort')?.addEventListener('input',syncMqttServerPortDetails);
+  }
+})();
+</script>
+
+
+<script>
+/* === TOP RIGHT BUTTONS + MQTT MODAL CONTROLS === */
+(function(){
+  function closeMqtt(){
+    const modal=document.getElementById('mqttModal');
+    if(!modal) return;
+    modal.classList.remove('show');
+    modal.style.display='none';
+    modal.setAttribute('aria-hidden','true');
+  }
+
+  function openMqttTab(tabName){
+    const modal=document.getElementById('mqttModal');
+    if(!modal) return;
+
+    modal.classList.add('show');
+    modal.style.display='flex';
+    modal.setAttribute('aria-hidden','false');
+
+    const details=document.getElementById('mqttDetailsPanel');
+    const settings=document.getElementById('mqttSettingsPanel');
+    const detailsTab=document.getElementById('mqttDetailsTab');
+    const settingsTab=document.getElementById('mqttSettingsTab');
+    const isSettings=(tabName==='settings');
+
+    if(details) details.style.display=isSettings?'none':'block';
+    if(settings) settings.style.display=isSettings?'block':'none';
+    if(detailsTab) detailsTab.classList.toggle('active',!isSettings);
+    if(settingsTab) settingsTab.classList.toggle('active',isSettings);
+
+    const title=document.getElementById('mqttModalTitle');
+    const desc=document.getElementById('mqttModalDescription');
+    if(title) title.textContent=isSettings?'MQTT SETTINGS':'MQTT DETAILS';
+    if(desc) desc.textContent=isSettings
+      ? 'Enter the MQTT broker server, WebSocket port, username and password.'
+      : 'Current MQTT broker and WebSocket connection information.';
+
+    const box=modal.querySelector('.mqtt-box');
+    if(box) box.scrollTop=0;
+  }
+
+  function openEvents(){
+    const events=document.getElementById('eventsList');
+    const content=document.querySelector('.content');
+    if(events && content){
+      const targetTop=Math.max(0, events.offsetTop - content.clientHeight + events.offsetHeight + 24);
+      content.scrollTo({top:targetTop,behavior:'smooth'});
+    }else{
+      document.querySelector('.nav-item[data-n="Events & Alerts"]')?.click();
+    }
+  }
+
+  document.addEventListener('click',function(ev){
+    const el=ev.target.closest?.('#bellBtn,#mqttDetailsBtn,#settingsTopBtn,#mqttClose,#mqttConnect,#mqttModal');
+    if(!el) return;
+
+    /* Close button must always work, independent of the main dashboard JS. */
+    if(el.id==='mqttClose'){
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      closeMqtt();
+      return;
+    }
+
+    /* Clicking the dark backdrop closes the modal too. */
+    if(el.id==='mqttModal' && ev.target===el){
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      closeMqtt();
+      return;
+    }
+
+    /* Let the existing MQTT connect handler execute, then close the popup. */
+    if(el.id==='mqttConnect'){
+      setTimeout(closeMqtt,350);
+      return;
+    }
+
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+
+    if(el.id==='bellBtn'){
+      openEvents();
+    }else if(el.id==='mqttDetailsBtn'){
+      openMqttTab('details');
+    }else if(el.id==='settingsTopBtn'){
+      openMqttTab('settings');
+    }
+  },true);
+})();
+</script>
+
+
+<script>
+(function(){
+  const app=document.querySelector('.app');
+  const btn=document.getElementById('sidebarToggle');
+  if(!app || !btn) return;
+  btn.addEventListener('click',()=>{
+    const hidden=app.classList.toggle('sidebar-hidden');
+    btn.textContent=hidden?'▶':'◀';
+    btn.title=hidden?'Show sidebar':'Hide sidebar';
+    btn.setAttribute('aria-label',hidden?'Show sidebar':'Hide sidebar');
+    setTimeout(()=>window.dispatchEvent(new Event('resize')),180);
+  });
+})();
+</script>
+</body>
+</html>
+
